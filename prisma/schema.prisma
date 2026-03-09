@@ -1,0 +1,31 @@
+// Growth Metrics Dashboard - Prisma Schema
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Metric {
+  id        String   @id @default(uuid())
+  name      String
+  value     Float
+  timestamp DateTime @default(now())
+  variant   String?  // A/B tests or experiment segments
+  country   String?  // Segmentation: country
+  device    String?  // Segmentation: device type
+  segment   String?  // Custom segment label
+  createdAt DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([name])
+  @@index([variant])
+  @@index([country])
+  @@index([device])
+  @@index([segment])
+  @@index([createdAt])
+}

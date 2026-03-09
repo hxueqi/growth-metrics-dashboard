@@ -1,0 +1,11 @@
+# Dependencies and build
+node_modules/
+.next/
+out/
+
+# Environment (never commit secrets)
+.env
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
