@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import { useSWRConfig } from "swr";
 import { metricsService } from "@/services";
 import { useMetrics } from "@/hooks/useMetrics";
@@ -17,8 +18,23 @@ import { Modal } from "./ui/Modal";
 import { ChartCard } from "./dashboard/ChartCard";
 import { MetricSelector } from "./MetricSelector";
 import { TimeRangeSelector } from "./TimeRangeSelector";
-import { MetricsChart } from "./MetricsChart";
 import { MetricForm } from "./MetricForm";
+
+/** Lazy-loaded to improve LCP: chart bundle (Recharts) no longer blocks first paint. */
+const MetricsChart = dynamic(
+  () => import("./MetricsChart").then((mod) => ({ default: mod.MetricsChart })),
+  {
+    loading: () => (
+      <div
+        className="h-full min-h-[550px] w-full rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-800/40"
+        aria-hidden
+      >
+        <Skeleton className="h-full w-full rounded-xl" />
+      </div>
+    ),
+    ssr: false,
+  }
+);
 
 const SAMPLE_SUCCESS_DURATION_MS = 5000;
 
