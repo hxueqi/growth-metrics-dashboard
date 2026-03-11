@@ -90,8 +90,24 @@ export async function createMetric(payload: CreateMetricPayload): Promise<Metric
 }
 
 /**
+ * Load sample dataset via server-only route. Use this in production so no secret is sent from the client.
+ * Server checks RESET_SAMPLE_SECRET and runs the full flow (clear + insert). Returns { created: number }.
+ */
+export async function loadSample(): Promise<{ created: number }> {
+  const res = await fetch(`${getBaseUrl()}/api/load-sample`, { method: "POST" });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : "Failed to load sample dataset";
+    throw new Error(message);
+  }
+  const data = await res.json();
+  return data as { created: number };
+}
+
+/**
  * Delete sample-named metrics in the given date range (ISO strings).
  * Used before re-inserting sample data so "Vs previous period" has data in both windows.
+ * @deprecated Prefer loadSample() for production (no client secret). Still used internally by reset-sample.
  */
 export async function resetSampleMetrics(startDate: string, endDate: string): Promise<{ deleted: number }> {
   const res = await fetch("/api/metrics/reset-sample", {

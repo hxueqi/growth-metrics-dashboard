@@ -70,7 +70,7 @@ src/
 
 1. Use a hosted PostgreSQL database (e.g. Vercel Postgres, Neon, Supabase) and set `DATABASE_URL` in the production environment.
 2. Run `npx prisma migrate deploy` once after provisioning the database (or add it to your host’s build/release step).
-3. Optionally set `RESET_SAMPLE_SECRET` if you need “Load sample dataset” in production; when set, requests to reset-sample must include the `x-internal-key` header. Leave unset to disable that route (the UI shows a friendly message).
+3. To enable **“Load sample dataset”** in production: set `RESET_SAMPLE_SECRET` to any non-empty string (e.g. a long random secret) in Vercel Environment Variables. The button then calls the server-only `POST /api/load-sample`; no secret is sent from the browser. Leave `RESET_SAMPLE_SECRET` unset to disable the feature (the UI shows a friendly message).
 
 **If you see database-related errors after deploy,** confirm `DATABASE_URL` is set and that `npx prisma migrate deploy` has been run against the production database.
 
@@ -82,7 +82,8 @@ src/
 - **POST /api/metrics** – Body: `{ name, value, timestamp; optional: unit, variant, country, device, segment }`. Creates one metric.
 - **DELETE /api/metrics** – Query param: `name`. Deletes all data points for that metric name. **Unauthenticated by design** for this demo; suitable for single-tenant or internal use only.
 - **GET /api/metrics/names** – Returns distinct metric names with units (for the selector and Add metric form).
-- **POST /api/metrics/reset-sample** – Body: `{ startDate, endDate }`. Clears sample-named metrics in that range (used by “Load sample dataset”). In production, disabled unless `RESET_SAMPLE_SECRET` is set; when set, requires `x-internal-key` header.
+- **POST /api/load-sample** – No body. Server-only: clears sample data and inserts 90 days of demo metrics. Used by the “Load sample dataset” button. In production, allowed only when `RESET_SAMPLE_SECRET` is set (no client header).
+- **POST /api/metrics/reset-sample** – Body: `{ startDate, endDate }`. Low-level clear of sample-named metrics in range. The UI uses `POST /api/load-sample` instead.
 
 ## Features
 
@@ -91,6 +92,6 @@ src/
 - **Time range** – Presets: Last 7 days, 30 days, 90 days.
 - **Line chart** – Metrics over time with tooltips, unit-aware axes, and legend (click to show/hide series). Full-screen option. Empty states when no metrics selected or no data.
 - **Add metric** – Modal with Name (dropdown + free text), Value, Date (no future), Unit (chips; locked when name matches an existing metric). Submit creates one data point and revalidates the chart.
-- **Load sample dataset** – Clears unwanted/sample metrics then inserts **90 days** of demo data (multiple metrics, correct units) so the chart and time-range filters have data. Protected in production by `RESET_SAMPLE_SECRET`.
+- **Load sample dataset** – Clears unwanted/sample metrics then inserts **90 days** of demo data (multiple metrics, correct units). In production, enable by setting `RESET_SAMPLE_SECRET` in Vercel; the server performs the action (no secret in the browser).
 - **Download report** – Exports the chart area as PDF with metadata.
 - **Defensive UI** – Validation (name length, value range, no future dates), skeleton loading, error banners with retry where applicable. Responsive layout; chart supports horizontal scroll and optional Y-axis hiding on narrow screens.
