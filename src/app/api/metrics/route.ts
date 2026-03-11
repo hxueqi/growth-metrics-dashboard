@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createMetric, getMetrics } from "@/lib/db/metrics";
+import { createMetric, getMetrics, deleteMetricsByName } from "@/lib/db/metrics";
 import { isValidDateString } from "@/lib/date";
+import { VALUE_MAX } from "@/lib/constants";
 
 // --- Validation helpers ---
 
@@ -9,11 +10,26 @@ function parseQueryString(value: string | null): string | undefined {
   return trimmed === "" ? undefined : trimmed;
 }
 
+const METRIC_UNITS = ["Count", "Percentage", "Currency", "Seconds"] as const;
+const UNIT_ALIASES: Record<string, (typeof METRIC_UNITS)[number]> = {
+  count: "Count",
+  percentage: "Percentage",
+  currency: "Currency",
+  seconds: "Seconds",
+};
+
+function normalizeUnit(raw: unknown): (typeof METRIC_UNITS)[number] {
+  if (typeof raw !== "string" || !raw.trim()) return "Count";
+  const key = raw.trim().toLowerCase();
+  return UNIT_ALIASES[key] ?? (METRIC_UNITS.includes(raw.trim() as (typeof METRIC_UNITS)[number]) ? (raw.trim() as (typeof METRIC_UNITS)[number]) : "Count");
+}
+
 /** POST body schema */
 interface CreateMetricBody {
   name: string;
   value: number;
   timestamp: string;
+  unit?: string;
   variant?: string;
   country?: string;
   device?: string;
@@ -44,7 +60,7 @@ function validateCreateBody(body: unknown): { ok: true; data: CreateMetricBody }
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return { ok: false, status: 400, error: "value is required and must be a finite number." };
   }
-  if (value < 0 || value > 1_000_000_000) {
+  if (value < 0 || value > VALUE_MAX) {
     return { ok: false, status: 400, error: "Value exceeds permitted range." };
   }
 
@@ -62,12 +78,15 @@ function validateCreateBody(body: unknown): { ok: true; data: CreateMetricBody }
     }
   }
 
+  const unit = normalizeUnit(b.unit);
+
   return {
     ok: true,
     data: {
       name: name.trim(),
       value,
       timestamp: timestamp.trim(),
+      unit,
       variant: optionalString(b.variant),
       country: optionalString(b.country),
       device: optionalString(b.device),
@@ -84,7 +103,12 @@ function validateCreateBody(body: unknown): { ok: true; data: CreateMetricBody }
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const name = parseQueryString(searchParams.get("name"));
+    const emptyParam = searchParams.get("empty") === "1";
+    if (emptyParam) {
+      return NextResponse.json([]);
+    }
+    const nameList = searchParams.getAll("name").map((s) => s?.trim()).filter(Boolean);
+    const names = nameList.length > 0 ? nameList : undefined;
     const startDateRaw = parseQueryString(searchParams.get("startDate"));
     const endDateRaw = parseQueryString(searchParams.get("endDate"));
 
@@ -102,12 +126,17 @@ export async function GET(request: NextRequest) {
     }
 
     const metrics = await getMetrics({
-      name,
+      names,
       startDate: startDateRaw ? new Date(startDateRaw) : undefined,
       endDate: endDateRaw ? new Date(endDateRaw) : undefined,
     });
 
-    return NextResponse.json(metrics);
+    const serialized = metrics.map((m) => ({
+      ...m,
+      value: m.value ?? 0,
+      unit: (m.unit ?? "Count").toString().toLowerCase(),
+    }));
+    return NextResponse.json(serialized);
   } catch (error) {
     console.error("[GET /api/metrics]", error);
     return NextResponse.json(
@@ -141,23 +170,60 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { name, value, timestamp, variant, country, device, segment } = validated.data;
+    const { name, value, timestamp, unit, variant, country, device, segment } = validated.data;
 
     const metric = await createMetric({
       name,
       value,
       timestamp: new Date(timestamp),
+      unit,
       variant: variant ?? null,
       country: country ?? null,
       device: device ?? null,
       segment: segment ?? null,
     });
 
-    return NextResponse.json(metric);
+    const serialized = {
+      ...metric,
+      value: metric.value ?? 0,
+      unit: (metric.unit ?? "Count").toString().toLowerCase(),
+    };
+    return NextResponse.json(serialized);
   } catch (error) {
     console.error("[POST /api/metrics]", error);
     return NextResponse.json(
       { error: "Failed to create metric." },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * DELETE /api/metrics?name=MetricName
+ * Deletes all data points for the given metric name.
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const name = parseQueryString(searchParams.get("name"));
+    if (!name) {
+      return NextResponse.json(
+        { error: "Query parameter 'name' is required." },
+        { status: 400 }
+      );
+    }
+    if (name.length > 50) {
+      return NextResponse.json(
+        { error: "Metric name must not exceed 50 characters." },
+        { status: 400 }
+      );
+    }
+    const deleted = await deleteMetricsByName(name);
+    return NextResponse.json({ deleted });
+  } catch (error) {
+    console.error("[DELETE /api/metrics]", error);
+    return NextResponse.json(
+      { error: "Failed to delete metric." },
       { status: 500 }
     );
   }

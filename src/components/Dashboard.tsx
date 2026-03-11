@@ -1,40 +1,35 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
+import { useSWRConfig } from "swr";
 import { metricsService } from "@/services";
 import { useMetrics } from "@/hooks/useMetrics";
+import { useMetricNames } from "@/hooks/useMetricNames";
 import { useDashboardFilters } from "@/hooks/useDashboardFilters";
-import { EXAMPLE_METRIC_NAMES } from "@/lib/constants";
+import { useDownloadReport } from "@/hooks/useDownloadReport";
 import { TIME_RANGE_PRESETS_MVP } from "@/lib/date";
-import { Card } from "./ui/Card";
+import { CHART_COLORS } from "@/lib/constants";
+import { COPY } from "@/lib/copy";
+import { getDefaultMetricSelection } from "@/lib/metricSelection";
 import { Skeleton } from "./ui/Skeleton";
 import { ErrorBanner } from "./ui/ErrorBanner";
 import { Modal } from "./ui/Modal";
+import { ChartCard } from "./dashboard/ChartCard";
 import { MetricSelector } from "./MetricSelector";
 import { TimeRangeSelector } from "./TimeRangeSelector";
 import { MetricsChart } from "./MetricsChart";
-import { MetricsSummary } from "./MetricSummary";
 import { MetricForm } from "./MetricForm";
 
 const SAMPLE_SUCCESS_DURATION_MS = 5000;
 
-function getMetricOptions(metricNamesFromData: string[]): string[] {
-  return [...new Set([...EXAMPLE_METRIC_NAMES, ...metricNamesFromData])].sort((a, b) =>
-    a.localeCompare(b)
-  );
-}
-
 export function Dashboard() {
   const filters = useDashboardFilters();
   const {
-    filters: { preset, dateRange, metricSelection },
+    filters: { preset, dateRange, selectedMetricNames },
     setPreset,
     setDateRange,
-    setMetricSelection,
+    setSelectedMetricNames,
     currentParams,
-    previousParams,
   } = filters;
 
   const [recordModalOpen, setRecordModalOpen] = useState(false);
@@ -43,10 +38,11 @@ export function Dashboard() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [sampleSuccessMessage, setSampleSuccessMessage] = useState<string | null>(null);
   const [sampleSkipMessage, setSampleSkipMessage] = useState<string | null>(null);
-  const [isExportingPdf, setIsExportingPdf] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const [isChartFullScreen, setIsChartFullScreen] = useState(false);
+  const [sampleJustLoaded, setSampleJustLoaded] = useState(false);
   const reportSectionRef = useRef<HTMLDivElement>(null);
+  const initialLoadDoneRef = useRef(false);
 
   useEffect(() => {
     if (!sampleSuccessMessage) return;
@@ -70,19 +66,62 @@ export function Dashboard() {
   // Clear skip message when user changes filters (they’re exploring)
   useEffect(() => {
     setSampleSkipMessage(null);
-  }, [preset, metricSelection.metricName]);
+  }, [preset, selectedMetricNames]);
 
+  const { mutate: mutateGlobal } = useSWRConfig();
   const { metrics, error, isLoading, revalidate } = useMetrics({ params: currentParams });
-  const { metrics: previousMetrics, revalidate: revalidatePrevious } = useMetrics({ params: previousParams });
+  const { names: metricOptions, rawMetrics, isLoading: isLoadingMetricNames, error: metricNamesError, revalidate: revalidateMetricNames } = useMetricNames();
 
-  const metricOptions = getMetricOptions(metrics.map((m) => m.name));
+  const showNoMetricsEmptyState = !rawMetrics?.length && !isLoadingMetricNames;
+
+  useEffect(() => {
+    if (isLoading || selectedMetricNames.length === 0) return;
+    const safeMetrics = Array.isArray(metrics) ? metrics : [];
+    if (safeMetrics.length === 0) {
+      console.warn(
+        "[Dashboard] Data mismatch: metrics selected but no data returned.",
+        { selectedMetricNames, params: currentParams }
+      );
+    }
+  }, [isLoading, selectedMetricNames, metrics, currentParams]);
+
+  useEffect(() => {
+    const list = Array.isArray(rawMetrics) ? rawMetrics : [];
+    if (initialLoadDoneRef.current || list.length === 0) return;
+    setSelectedMetricNames(getDefaultMetricSelection(list));
+    initialLoadDoneRef.current = true;
+  }, [rawMetrics, setSelectedMetricNames]);
+
+  useEffect(() => {
+    const list = Array.isArray(rawMetrics) ? rawMetrics : [];
+    if (!sampleJustLoaded || list.length === 0) return;
+    setSelectedMetricNames(getDefaultMetricSelection(list));
+    setSampleJustLoaded(false);
+  }, [sampleJustLoaded, rawMetrics, setSelectedMetricNames]);
 
   const onMetricCreated = useCallback(() => {
     revalidate();
-    revalidatePrevious();
+    revalidateMetricNames();
     setRecordModalOpen(false);
     setFormError("");
-  }, [revalidate, revalidatePrevious]);
+  }, [revalidate, revalidateMetricNames]);
+
+  const onRemoveMetric = useCallback(
+    async (name: string) => {
+      try {
+        setRemoveError(null);
+        await metricsService.deleteMetricByName(name);
+        setSelectedMetricNames((prev) => prev.filter((n) => n !== name));
+        await revalidateMetricNames();
+        await revalidate();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not remove metric.";
+        setRemoveError(`Could not remove "${name}". ${message}`);
+        throw err;
+      }
+    },
+    [revalidate, revalidateMetricNames, setSelectedMetricNames]
+  );
 
   const handleGenerateSample = useCallback(async () => {
     setIsGenerating(true);
@@ -91,12 +130,17 @@ export function Dashboard() {
     setSampleSkipMessage(null);
     try {
       const result = await metricsService.createSampleMetrics();
-      await revalidate();
-      await revalidatePrevious();
+      await revalidateMetricNames();
+      mutateGlobal(
+        (key) => Array.isArray(key) && key[0] === "/api/metrics",
+        undefined,
+        { revalidate: true }
+      );
       if (result.skipped) {
         setSampleSkipMessage("Sample dataset already loaded. Change metric or time range to explore.");
       } else if (result.created > 0) {
         setSampleSuccessMessage("Sample dataset loaded. Explore the metrics below.");
+        setSampleJustLoaded(true);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load sample dataset";
@@ -108,68 +152,32 @@ export function Dashboard() {
     } finally {
       setIsGenerating(false);
     }
-  }, [revalidate, revalidatePrevious]);
+  }, [revalidateMetricNames, mutateGlobal]);
 
   const timeRangeLabel =
     TIME_RANGE_PRESETS_MVP.find((p) => p.value === (preset === "custom" ? "7d" : preset))?.label ??
     "Last 7 days";
-  const metricLabel = metricSelection.metricName.trim() || "All metrics";
+  const metricLabel =
+    selectedMetricNames.length === 0
+      ? "Select metrics..."
+      : selectedMetricNames.join(", ");
 
-  const handleDownloadReport = useCallback(async () => {
-    const el = reportSectionRef.current;
-    if (!el) return;
-    setDownloadError(null);
-    setIsExportingPdf(true);
-    try {
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: "#ffffff",
-      });
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF("p", "mm", "a4");
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const margin = 14;
-      const maxW = pageW - margin * 2;
-      const maxH = pageH - margin * 2 - 35;
+  const { download: downloadReport, isExporting: isExportingPdf, error: downloadError, clearError: clearDownloadError } = useDownloadReport(reportSectionRef, {
+    title: "Growth Metrics Report",
+    metricLabel,
+    timeRangeLabel,
+  });
 
-      pdf.setFontSize(14);
-      pdf.text("Growth Metrics Report", margin, 16);
-      pdf.setFontSize(10);
-      pdf.text(`Metric: ${metricLabel}`, margin, 24);
-      pdf.text(`Time range: ${timeRangeLabel}`, margin, 30);
-      pdf.text(`Exported: ${new Date().toLocaleString()}`, margin, 36);
+  const chartTitle =
+    selectedMetricNames.length === 0
+      ? "Metric trends"
+      : selectedMetricNames.length === 1
+        ? `${selectedMetricNames[0]} Trends`
+        : selectedMetricNames.length === 2
+          ? `${selectedMetricNames[0]} & ${selectedMetricNames[1]} Trends`
+          : `${selectedMetricNames[0]}, ${selectedMetricNames[1]} & ${selectedMetricNames.length - 2} more Trends`;
 
-      const imgW = canvas.width;
-      const imgH = canvas.height;
-      const aspect = imgH / imgW;
-      let wMm = maxW;
-      let hMm = maxW * aspect;
-      if (hMm > maxH) {
-        hMm = maxH;
-        wMm = maxH / aspect;
-      }
-      pdf.addImage(imgData, "PNG", margin, 42, wMm, hMm);
-
-      pdf.save(`growth-metrics-report-${Date.now()}.pdf`);
-    } catch (err) {
-      const isEvent = typeof err === "object" && err !== null && "type" in err && "target" in err;
-      const message =
-        err instanceof Error
-          ? err.message
-          : isEvent
-            ? "Download was blocked or failed."
-            : "Report download failed.";
-      console.error("[Download report]", message, isEvent ? "(browser event)" : err);
-      setDownloadError("Download failed. Try a smaller time range or another browser.");
-    } finally {
-      setIsExportingPdf(false);
-    }
-  }, [timeRangeLabel, metricLabel]);
-
-  const bentoClass = "rounded-xl border border-slate-200 bg-white dark:border-slate-600 dark:bg-gray-800";
+  const sectionCardClass = "rounded-xl border border-slate-200 bg-white dark:border-slate-600 dark:bg-gray-800";
 
   return (
     <div className="min-h-screen bg-gray-100 px-8 pb-16 dark:bg-gray-950">
@@ -180,9 +188,9 @@ export function Dashboard() {
         Skip to main content
       </a>
 
-      <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl space-y-3 pt-3">
+      <main id="main-content" tabIndex={-1} className="mx-auto max-w-7xl space-y-3 pt-3">
         {/* Header Section — title + actions on one line */}
-        <header className={`flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 sm:px-6 ${bentoClass}`}>
+        <header className={`flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 sm:px-6 ${sectionCardClass}`}>
           <h1 className="text-xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-2xl">
             Growth Metrics
           </h1>
@@ -194,15 +202,15 @@ export function Dashboard() {
               aria-label="Load sample acquisition and activation funnel for last 7 days"
               className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 disabled:opacity-50 dark:border-slate-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
-              {isGenerating ? "Loading…" : "Load sample dataset"}
+              {isGenerating ? "Loading…" : "Load Sample Dataset"}
             </button>
             <button
               type="button"
-              onClick={handleDownloadReport}
+              onClick={downloadReport}
               disabled={isExportingPdf || (isLoading && metrics.length === 0)}
               className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 disabled:opacity-50 dark:border-slate-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
-              {isExportingPdf ? "Preparing…" : "Download report"}
+              {isExportingPdf ? "Preparing…" : "Download Report"}
             </button>
             <button
               type="button"
@@ -216,15 +224,15 @@ export function Dashboard() {
           </div>
         </header>
 
-        {/* Filter Section — slim light-gray bar */}
-        <div className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 dark:border-slate-600 dark:bg-slate-800/60 sm:px-6">
-          <div className="min-w-0 flex-1 sm:min-w-[160px]">
+        {/* Filter Section — slim light-gray bar with subtle border and shadow */}
+        <div className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 shadow-sm dark:border-slate-600 dark:bg-slate-800/60 sm:px-6">
+          <div className="min-w-0 flex-1 sm:min-w-[200px]">
             <MetricSelector
-              metricOptions={metricOptions}
-              variantOptions={[]}
-              value={metricSelection}
-              onChange={setMetricSelection}
-              placeholder="All metrics"
+              rawMetrics={rawMetrics}
+              value={selectedMetricNames}
+              onChange={setSelectedMetricNames}
+              onRemoveMetric={onRemoveMetric}
+              placeholder="Search or select metrics..."
             />
           </div>
           <div className="w-full min-w-0 sm:w-auto sm:flex-shrink-0">
@@ -245,7 +253,16 @@ export function Dashboard() {
           <div className="mb-4">
             <ErrorBanner
               message={downloadError}
-              onRetry={() => setDownloadError(null)}
+              onRetry={clearDownloadError}
+              variant="error"
+            />
+          </div>
+        )}
+        {removeError && (
+          <div className="mb-4">
+            <ErrorBanner
+              message={removeError}
+              onRetry={() => setRemoveError(null)}
               variant="error"
             />
           </div>
@@ -281,110 +298,82 @@ export function Dashboard() {
           ref={reportSectionRef}
           className="grid gap-3"
         >
-          {/* Summary — Bento card, compact on desktop (1/5 of row space) */}
-          <div
-            className={`min-h-0 overflow-hidden px-4 pb-3 pt-2.5 sm:px-6 lg:pb-2.5 lg:pt-2.5 ${bentoClass}`}
-          >
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-gray-900 dark:text-white">
-                Summary
-              </h2>
-              <span className="text-slate-300 dark:text-slate-600" aria-hidden>
-                |
-              </span>
-              <p className="text-sm font-normal text-slate-500 dark:text-slate-400">
-                {`${metricLabel} · ${timeRangeLabel}`}
-              </p>
-            </div>
-            {isLoading ? (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                {[1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border border-slate-200 p-3 dark:border-slate-600"
+          {/* Chart — Bento card, fixed max-height; overflow-x-auto for narrow screens */}
+          <ChartCard
+            title={showNoMetricsEmptyState ? COPY.emptyNoMetricsTitle : chartTitle}
+            titleTitle={showNoMetricsEmptyState ? COPY.emptyNoMetricsTitle : chartTitle}
+            colorKeyItems={
+              !showNoMetricsEmptyState && selectedMetricNames.length >= 2
+                ? selectedMetricNames.map((name, i) => ({
+                    name,
+                    color: CHART_COLORS[i % CHART_COLORS.length],
+                  }))
+                : undefined
+            }
+            legendHint={!showNoMetricsEmptyState && selectedMetricNames.length > 1}
+            onFullScreen={showNoMetricsEmptyState ? undefined : () => setIsChartFullScreen(true)}
+            loading={isLoading && metrics.length > 0}
+            noMetricsEmptyState={
+              showNoMetricsEmptyState ? (
+                <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-5 rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-6 py-10 text-center dark:border-slate-600 dark:bg-slate-800/40">
+                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                    {COPY.emptyNoMetricsCopy}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleGenerateSample}
+                    disabled={isGenerating}
+                    className="rounded-lg bg-factorial-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-factorial-accent-hover focus:outline-none focus:ring-2 focus:ring-factorial-accent focus:ring-offset-2 disabled:opacity-50 dark:bg-factorial-accent dark:hover:bg-factorial-accent-hover"
                   >
-                    <Skeleton className="mb-2 h-3 w-20" />
-                    <Skeleton className="h-7 w-24" />
-                  </div>
-                ))}
+                    {isGenerating ? "Loading…" : COPY.emptyNoMetricsCta}
+                  </button>
+                </div>
+              ) : undefined
+            }
+          >
+            {isLoading ? (
+              <div
+                className="h-full min-h-[550px] w-full rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-800/40"
+                aria-hidden
+              >
+                <Skeleton className="h-full w-full rounded-xl" />
               </div>
             ) : (
-              <MetricsSummary
+              <MetricsChart
                 metrics={metrics}
-                previousPeriodMetrics={previousMetrics}
-                contextLabel={`${metricLabel} · ${timeRangeLabel}`}
-                hideContextLabel
-                allMetricsMode={metricSelection.metricName.trim() === ""}
-              />
-            )}
-          </div>
-
-          {/* Chart — Bento card, fixed max-height for above-the-fold layout; overflow-x-auto for narrow screens */}
-          <Card className="flex flex-col overflow-x-auto p-0">
-            <div className="flex items-center justify-between gap-2 px-4 pt-2 pb-0 sm:px-5 lg:px-6">
-              <p className="text-xs font-bold text-gray-700 dark:text-gray-300">
-                Metrics over time
-              </p>
-              <div className="flex items-center gap-2">
-                {isLoading && metrics.length > 0 && (
-                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-factorial-accent" />
-                    Updating…
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setIsChartFullScreen(true)}
-                  aria-label="Expand chart to full screen"
-                  className="rounded p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div className="min-h-[300px] min-w-0 max-h-[320px] aspect-[16/7] w-full px-4 pb-3 pt-2 sm:min-h-0 sm:px-5 sm:pb-4 sm:pt-2.5 lg:px-6 lg:pb-4 lg:pt-3">
-              {isLoading ? (
-                <div
-                  className="h-full w-full min-h-[300px] rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-800/40 sm:min-h-[180px]"
-                  aria-hidden
-                >
-                  <Skeleton className="h-full w-full rounded-xl" />
-                </div>
-              ) : (
-                <MetricsChart
-                  metrics={metrics}
-                  selectedName={metricSelection.metricName.trim() || undefined}
-                  timeRangePreset={preset === "custom" ? "7d" : preset}
-                  useDualYAxis={metricSelection.metricName.trim() === ""}
-                  containerClassName="h-full min-h-[300px] max-h-[320px] aspect-[16/7] sm:min-h-[180px]"
-                  emptyState={
-                    metrics.length === 0
+                selectedName={undefined}
+                timeRangePreset={preset === "custom" ? "7d" : preset}
+                useDualYAxis={selectedMetricNames.length > 1}
+                metricUnits={Object.fromEntries(rawMetrics.map((m) => [m.name, m.unit]))}
+                containerClassName="h-full min-h-[550px]"
+                emptyState={
+                  selectedMetricNames.length === 0
+                    ? {
+                        primary: COPY.emptyChartSelectMetric,
+                        secondary: COPY.emptyChartSelectMetricSecondary,
+                      }
+                    : metrics.length === 0
                       ? {
-                          primary: "No data in this time range",
-                          secondary:
-                            "Add a metric or load the sample dataset to explore the funnel.",
+                          primary: COPY.emptyChartNoDataPrimary,
+                          secondary: COPY.emptyChartNoDataSecondary,
                           primaryAction: {
-                            label: "Load sample dataset",
+                            label: COPY.emptyChartLoadSampleLabel,
                             onClick: handleGenerateSample,
                             loading: isGenerating,
                           },
                           secondaryAction: {
-                            label: "Add metric",
+                            label: COPY.emptyChartAddDataLabel,
                             onClick: () => setRecordModalOpen(true),
                           },
                         }
                       : {
-                          primary: "No data for this metric in the selected range",
-                          secondary:
-                            "Try a different metric or time range.",
+                          primary: COPY.emptyChartNoDataForRangePrimary,
+                          secondary: COPY.emptyChartNoDataForRangeSecondary,
                         }
-                  }
-                />
-              )}
-            </div>
-          </Card>
+                }
+              />
+            )}
+          </ChartCard>
         </div>
       </main>
 
@@ -397,9 +386,16 @@ export function Dashboard() {
           aria-label="Chart full screen"
         >
           <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
-            <p className="text-sm font-semibold text-gray-900 dark:text-white">
-              Metrics over time
-            </p>
+            <div>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white sm:text-lg">
+                {chartTitle}
+              </h3>
+              {selectedMetricNames.length > 1 && (
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  Click a metric in the legend to show or hide it.
+                </p>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => setIsChartFullScreen(false)}
@@ -414,29 +410,35 @@ export function Dashboard() {
           <div className="min-h-0 flex-1 p-4">
             <MetricsChart
               metrics={metrics}
-              selectedName={metricSelection.metricName.trim() || undefined}
+              selectedName={undefined}
               timeRangePreset={preset === "custom" ? "7d" : preset}
-              useDualYAxis={metricSelection.metricName.trim() === ""}
+              useDualYAxis={selectedMetricNames.length > 1}
+              metricUnits={Object.fromEntries(rawMetrics.map((m) => [m.name, m.unit]))}
               containerClassName="h-full min-h-[400px]"
-              emptyState={
-                metrics.length === 0
-                  ? {
-                      primary: "No data in this time range",
-                      secondary: "Add a metric or load the sample dataset to explore the funnel.",
-                      primaryAction: {
-                        label: "Load sample dataset",
-                        onClick: handleGenerateSample,
-                        loading: isGenerating,
-                      },
-                      secondaryAction: {
-                        label: "Add metric",
-                        onClick: () => setRecordModalOpen(true),
-                      },
-                    }
-                  : {
-                      primary: "No data for this metric in the selected range",
-                      secondary: "Try a different metric or time range.",
-                    }
+emptyState={
+                  selectedMetricNames.length === 0
+                    ? {
+                        primary: COPY.emptyChartSelectMetric,
+                        secondary: COPY.emptyChartSelectMetricSecondary,
+                      }
+                  : metrics.length === 0
+                    ? {
+                        primary: COPY.emptyChartNoDataPrimary,
+                        secondary: COPY.emptyChartNoDataSecondary,
+                        primaryAction: {
+                          label: COPY.emptyChartLoadSampleLabel,
+                          onClick: handleGenerateSample,
+                          loading: isGenerating,
+                        },
+                        secondaryAction: {
+                          label: COPY.emptyChartAddDataLabel,
+                          onClick: () => setRecordModalOpen(true),
+                        },
+                      }
+                    : {
+                        primary: COPY.emptyChartNoDataForRangePrimary,
+                        secondary: COPY.emptyChartNoDataForRangeSecondary,
+                      }
               }
             />
           </div>
@@ -451,17 +453,29 @@ export function Dashboard() {
           setFormError("");
         }}
         title="Add metric"
+        contentClassName="pt-2 pb-3"
       >
-        <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
-          Create a new metric entry.
-        </p>
         {formError && (
-          <p id="metric-form-error" className="mb-3 rounded-lg border border-red-200 bg-red-50/80 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/20 dark:text-red-400">
+          <p id="metric-form-error" className="mb-2 rounded-lg border border-red-200 bg-red-50/80 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/20 dark:text-red-400">
             {formError}
           </p>
         )}
+        {metricNamesError && (
+          <p role="alert" className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-600 dark:border-amber-700 dark:bg-amber-950/20 dark:text-amber-400">
+            Could not load metric list.{" "}
+            <button
+              type="button"
+              onClick={() => revalidateMetricNames()}
+              className="font-medium underline underline-offset-2 hover:no-underline focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 rounded"
+            >
+              Retry
+            </button>
+          </p>
+        )}
+        <div className="pt-0">
         <MetricForm
-          metricOptions={metricOptions.length > 0 ? metricOptions : [...EXAMPLE_METRIC_NAMES]}
+          existingMetricNames={metricOptions}
+          existingMetricsWithUnits={rawMetrics}
           formError={formError}
           onSuccess={onMetricCreated}
           onError={setFormError}
@@ -470,7 +484,9 @@ export function Dashboard() {
             setFormError("");
           }}
         />
+        </div>
       </Modal>
+
     </div>
   );
 }

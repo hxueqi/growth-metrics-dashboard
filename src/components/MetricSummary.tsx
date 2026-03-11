@@ -1,5 +1,6 @@
 "use client";
 
+/** Summary KPI cards (current, average, vs previous period). Not rendered in the current dashboard; reserved for future use. */
 import type { Metric } from "@/types/metric";
 import { computeSummaryStats, computeAllMetricsSummary } from "@/lib/metrics";
 import {

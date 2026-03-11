@@ -9,6 +9,7 @@ export interface Metric {
   name: string;
   value: number;
   timestamp: string;
+  unit?: string;
   variant: string | null;
   country: string | null;
   device: string | null;
@@ -21,11 +22,20 @@ export interface CreateMetricPayload {
   name: string;
   value: number;
   timestamp: string;
+  unit?: string;
   variant?: string | null;
   country?: string | null;
   device?: string | null;
   segment?: string | null;
 }
+
+/** Raw metric option for selector (name + unit). */
+export interface RawMetricOption {
+  name: string;
+  unit: string;
+}
+
+export const METRIC_UNIT_OPTIONS = ["Count", "Percentage", "Currency", "Seconds"] as const;
 
 /** Breakdown / segmentation dimensions. Extensible: add key + field on Metric. */
 export type BreakdownDimensionId = "variant" | "country" | "device" | "segment";
@@ -39,15 +49,14 @@ export interface BreakdownDimensionConfig {
 
 /** Query parameters for fetching metrics (GET /api/metrics). */
 export interface MetricsQueryParams {
+  /** Single name (legacy). Prefer `names` for multi-select. */
   name?: string;
+  /** Filter by these metric names. Omit = all metrics. */
+  names?: string[];
+  /** When true, return no metrics (empty chart). */
+  empty?: boolean;
   startDate?: string;
   endDate?: string;
-}
-
-/** Current metric + variant selection in the dashboard. */
-export interface MetricSelection {
-  metricName: string;
-  variant: string;
 }
 
 /** Summary statistics computed from a list of metrics. */

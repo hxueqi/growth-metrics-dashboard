@@ -17,13 +17,15 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   className?: string;
+  /** Optional class for the scrollable content area (below the header). */
+  contentClassName?: string;
 }
 
 /**
  * Simple modal: overlay + centered panel. Closes on overlay click or Escape.
  * Moves focus into the dialog when opened and traps focus until closed.
  */
-export function Modal({ open, onClose, title, children, className }: ModalProps) {
+export function Modal({ open, onClose, title, children, className, contentClassName }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
@@ -115,7 +117,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
             <span aria-hidden="true" className="text-[18px] leading-none">×</span>
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
+        <div className={cn("min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4", contentClassName)}>
           {children}
         </div>
       </div>

@@ -2,7 +2,12 @@
  * Client-side API functions for metrics. All return typed data.
  */
 
-import type { Metric, CreateMetricPayload, MetricsQueryParams } from "@/types/metric";
+import type {
+  Metric,
+  CreateMetricPayload,
+  MetricsQueryParams,
+  RawMetricOption,
+} from "@/types/metric";
 
 function getBaseUrl(): string {
   if (typeof window !== "undefined") return window.location.origin;
@@ -10,18 +15,60 @@ function getBaseUrl(): string {
 }
 
 /**
+ * Fetch distinct metric names with unit (sorted A–Z).
+ */
+export async function fetchMetricNamesWithUnits(): Promise<RawMetricOption[]> {
+  const res = await fetch(`${getBaseUrl()}/api/metrics/names`);
+  if (!res.ok) throw new Error("Failed to fetch metric names");
+  const data = await res.json();
+  if (Array.isArray(data?.metrics)) return data.metrics;
+  return Array.isArray(data?.names) ? data.names.map((name: string) => ({ name, unit: "Count" })) : [];
+}
+
+export async function fetchMetricNames(): Promise<string[]> {
+  const metrics = await fetchMetricNamesWithUnits();
+  return metrics.map((m) => m.name);
+}
+
+/**
  * Fetch metrics with optional filters. Returns metrics sorted by timestamp (asc).
  */
 export async function fetchMetrics(params?: MetricsQueryParams): Promise<Metric[]> {
   const url = new URL("/api/metrics", getBaseUrl());
-  if (params?.name) url.searchParams.set("name", params.name);
+  if (params?.empty) {
+    url.searchParams.set("empty", "1");
+  } else if (params?.names?.length) {
+    params.names.forEach((n) => url.searchParams.append("name", n));
+  } else if (params?.name) {
+    url.searchParams.set("name", params.name);
+  }
   if (params?.startDate) url.searchParams.set("startDate", params.startDate);
   if (params?.endDate) url.searchParams.set("endDate", params.endDate);
 
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error("Failed to fetch metrics");
   const data = await res.json();
-  return data as Metric[];
+  if (!Array.isArray(data)) return [];
+  return data.map((m: Record<string, unknown>) => ({
+    ...m,
+    value: typeof m.value === "number" && Number.isFinite(m.value) ? m.value : 0,
+  })) as Metric[];
+}
+
+/**
+ * Delete all data points for a metric by name. Returns the number of records deleted.
+ */
+export async function deleteMetricByName(name: string): Promise<{ deleted: number }> {
+  const res = await fetch(
+    `${getBaseUrl()}/api/metrics?${new URLSearchParams({ name: name.trim() })}`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : "Failed to delete metric";
+    throw new Error(message);
+  }
+  return res.json();
 }
 
 /**
@@ -59,4 +106,25 @@ export async function resetSampleMetrics(startDate: string, endDate: string): Pr
   }
   const data = await res.json();
   return data as { deleted: number };
+}
+
+/**
+ * Create multiple metrics in one request (batch insert).
+ * Body: { metrics: CreateMetricPayload[] }. Returns { count: number }.
+ */
+export async function createMetricsBatch(
+  metrics: CreateMetricPayload[]
+): Promise<{ count: number }> {
+  const res = await fetch(`${getBaseUrl()}/api/metrics/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ metrics }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : "Failed to create metrics";
+    throw new Error(message);
+  }
+  const data = await res.json();
+  return data as { count: number };
 }

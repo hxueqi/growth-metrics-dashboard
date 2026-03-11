@@ -4,16 +4,28 @@
  */
 
 import * as api from "@/lib/api";
-import { getDateRangeForPreset } from "@/lib/date";
-import { generateSampleMetrics, getSampleMetricNames } from "@/lib/sampleMetrics";
-import type { Metric, CreateMetricPayload, MetricsQueryParams } from "@/types/metric";
-
-/** Minimum number of sample-named metrics in range to consider "already loaded". */
-const SAMPLE_ALREADY_LOADED_THRESHOLD = 15;
+import { getExactDaysRange } from "@/lib/date";
+import { SAMPLE_DAYS } from "@/lib/constants";
+import { generateSampleMetrics, NAMES_TO_FULLY_REMOVE_ON_SAMPLE_LOAD } from "@/lib/sampleMetrics";
+import type {
+  Metric,
+  CreateMetricPayload,
+  MetricsQueryParams,
+} from "@/types/metric";
 
 export interface CreateSampleMetricsResult {
   created: number;
   skipped: boolean;
+}
+
+/** Fetch distinct metric names (for selector and form suggestions). */
+export async function fetchMetricNames(): Promise<string[]> {
+  return api.fetchMetricNames();
+}
+
+/** Fetch distinct metric names with unit (for selector with unit display). */
+export async function fetchMetricNamesWithUnits(): Promise<{ name: string; unit: string }[]> {
+  return api.fetchMetricNamesWithUnits();
 }
 
 /** Fetch metrics with optional filters. */
@@ -26,44 +38,40 @@ export async function createMetric(payload: CreateMetricPayload): Promise<Metric
   return api.createMetric(payload);
 }
 
-/** Full 60-day sample has 5 metrics × 60 days = 300 points. */
-const SAMPLE_FULL_COUNT = 300;
+/** Delete all data points for a metric by name. */
+export async function deleteMetricByName(name: string): Promise<{ deleted: number }> {
+  return api.deleteMetricByName(name);
+}
 
 /**
- * Load the sample dataset (two 30-day windows for "Vs previous period" on 7d and 30d).
- * If the last 7 days already have sample data but the last 60 days do not have a full set,
- * clears sample data in the last 60 days and re-inserts so comparison works.
+ * Load the sample dataset. Clears the DB first so old/unwanted metric names and units
+ * don't persist in the UI dropdown:
+ * 1. Fully remove unwanted metrics (e.g. Demo Bookings, staytime) from the entire DB.
+ * 2. Delete sample + legacy names in the last 90 days.
+ * 3. Insert 90 days of sample data with correct units.
  */
 export async function createSampleMetrics(): Promise<CreateSampleMetricsResult> {
-  const sampleNames = new Set(getSampleMetricNames());
+  const { startDate: rangeStart, endDate: rangeEnd } = getExactDaysRange(SAMPLE_DAYS);
 
-  const { startDate: last7Start, endDate: last7End } = getDateRangeForPreset(7);
-  const existing7 = await api.fetchMetrics({ startDate: last7Start, endDate: last7End });
-  const countLast7 = existing7.filter((m) => sampleNames.has(m.name)).length;
+  // Remove unwanted metrics entirely so they disappear from the metric names dropdown
+  await Promise.all(
+    NAMES_TO_FULLY_REMOVE_ON_SAMPLE_LOAD.map((name) => api.deleteMetricByName(name))
+  );
 
-  if (countLast7 >= SAMPLE_ALREADY_LOADED_THRESHOLD) {
-    const { startDate: last60Start, endDate: last60End } = getDateRangeForPreset(60);
-    const existing60 = await api.fetchMetrics({ startDate: last60Start, endDate: last60End });
-    const countLast60 = existing60.filter((m) => sampleNames.has(m.name)).length;
-
-    if (countLast60 >= SAMPLE_FULL_COUNT) {
-      return { created: 0, skipped: true };
-    }
-
-    await api.resetSampleMetrics(last60Start, last60End);
-  }
+  await api.resetSampleMetrics(rangeStart, rangeEnd);
 
   const payloads = generateSampleMetrics();
-  for (const p of payloads) {
-    await api.createMetric({
+  const { count } = await api.createMetricsBatch(
+    payloads.map((p) => ({
       name: p.name,
       value: p.value,
       timestamp: p.timestamp,
+      unit: p.unit ?? "Count",
       variant: p.variant ?? null,
       country: p.country ?? null,
       device: p.device ?? null,
       segment: p.segment ?? null,
-    });
-  }
-  return { created: payloads.length, skipped: false };
+    }))
+  );
+  return { created: count, skipped: false };
 }

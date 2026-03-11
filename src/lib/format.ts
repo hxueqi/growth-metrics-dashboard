@@ -64,3 +64,46 @@ export function formatPercent(value: number): string {
  * Placeholder when a value is missing (e.g. no data).
  */
 export const EMPTY_VALUE_LABEL = "—";
+
+/**
+ * Format a number for chart Y-axis ticks by unit.
+ * Currency: €1,200; Percentage: 85%; Seconds: 45s; Count: compact (1.2k).
+ */
+export function formatChartYAxisValue(value: number, unit?: string): string {
+  const u = (unit?.trim() || "Count").toLowerCase();
+  if (u === "currency") {
+    return `€${value >= 1000 ? (value / 1000).toFixed(1) + "k" : value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  }
+  if (u === "percentage") {
+    return `${Number(value).toFixed(0)}%`;
+  }
+  if (u === "seconds") {
+    return `${Number(value).toFixed(0)}s`;
+  }
+  // Count or unknown: compact notation for large numbers
+  if (Math.abs(value) >= 1_000_000) {
+    return (value / 1_000_000).toFixed(1) + "M";
+  }
+  if (Math.abs(value) >= 1_000) {
+    return (value / 1_000).toFixed(1) + "k";
+  }
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/**
+ * Format a value for chart tooltip with unit context.
+ * Currency: €1,234.56; Percentage: 85.2%; Seconds: 45.3s; Count: 1,234.
+ */
+export function formatChartTooltipValue(value: number, unit?: string): string {
+  const u = (unit?.trim() || "Count").toLowerCase();
+  if (u === "currency") {
+    return `€${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  }
+  if (u === "percentage") {
+    return `${Number(value).toFixed(2)}%`;
+  }
+  if (u === "seconds") {
+    return `${Number(value).toFixed(2)}s`;
+  }
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}

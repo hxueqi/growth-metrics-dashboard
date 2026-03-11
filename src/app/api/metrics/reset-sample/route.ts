@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteMetricsByNamesAndDateRange } from "@/lib/db/metrics";
-import { getSampleMetricNames } from "@/lib/sampleMetrics";
+import { getSampleMetricNamesToClear } from "@/lib/sampleMetrics";
 import { isValidDateString } from "@/lib/date";
+import { SAMPLE_DAYS } from "@/lib/constants";
 
 const RESET_SAMPLE_SECRET = process.env.RESET_SAMPLE_SECRET;
 
@@ -59,15 +60,15 @@ export async function POST(request: NextRequest) {
 
     const startMs = new Date(startDateRaw).getTime();
     const endMs = new Date(endDateRaw).getTime();
-    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
-    if (endMs - startMs > ninetyDaysMs) {
+    const maxRangeMs = (SAMPLE_DAYS + 1) * 24 * 60 * 60 * 1000;
+    if (endMs - startMs >= maxRangeMs) {
       return NextResponse.json(
         { error: "Date range must not exceed 90 days." },
         { status: 400 }
       );
     }
 
-    const names = getSampleMetricNames();
+    const names = getSampleMetricNamesToClear();
     const deleted = await deleteMetricsByNamesAndDateRange(
       names,
       new Date(startDateRaw),

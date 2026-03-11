@@ -3,27 +3,30 @@
 import { useState, useMemo } from "react";
 import {
   getDateRangeForPreset,
-  getPreviousPeriodRange,
   toDateTimeLocal,
   type TimeRangePreset,
   type DateRangeInput,
 } from "@/lib/date";
-import type { MetricsQueryParams, BreakdownDimensionId, MetricSelection } from "@/types/metric";
+import { DEFAULT_DATE_RANGE_DAYS } from "@/lib/constants";
+import type { MetricsQueryParams, BreakdownDimensionId } from "@/types/metric";
 
 const INITIAL_PRESET: TimeRangePreset = "7d";
 
 function getInitialDateRange(): DateRangeInput {
-  const { startDate, endDate } = getDateRangeForPreset(7);
+  const { startDate, endDate } = getDateRangeForPreset(DEFAULT_DATE_RANGE_DAYS);
   return {
     startDate: toDateTimeLocal(new Date(startDate)),
     endDate: toDateTimeLocal(new Date(endDate)),
   };
 }
 
+/** Selected metric names. [] = none (empty chart). Default is set by Dashboard from first two same-unit metrics. */
+export type MetricSelection = string[];
+
 export interface DashboardFiltersState {
   preset: TimeRangePreset;
   dateRange: DateRangeInput;
-  metricSelection: MetricSelection;
+  selectedMetricNames: MetricSelection;
   breakdownBy: BreakdownDimensionId | "";
 }
 
@@ -31,56 +34,44 @@ export interface UseDashboardFiltersReturn {
   filters: DashboardFiltersState;
   setPreset: (preset: TimeRangePreset) => void;
   setDateRange: (range: DateRangeInput | ((prev: DateRangeInput) => DateRangeInput)) => void;
-  setMetricSelection: (value: MetricSelection | ((prev: MetricSelection) => MetricSelection)) => void;
+  setSelectedMetricNames: (value: MetricSelection | ((prev: MetricSelection) => MetricSelection)) => void;
   setBreakdownBy: (value: BreakdownDimensionId | "") => void;
   currentParams: MetricsQueryParams;
-  previousParams: MetricsQueryParams;
 }
 
 /**
  * Centralized filter state for the dashboard. Single source of truth for
- * time range, metric selection, and breakdown dimension.
+ * time range and metric selection (multi-select).
  */
 export function useDashboardFilters(): UseDashboardFiltersReturn {
   const [preset, setPreset] = useState<TimeRangePreset>(INITIAL_PRESET);
   const [dateRange, setDateRange] = useState<DateRangeInput>(getInitialDateRange);
-  const [metricSelection, setMetricSelection] = useState<MetricSelection>({
-    metricName: "",
-    variant: "",
-  });
+  const [selectedMetricNames, setSelectedMetricNames] = useState<MetricSelection>([]);
   const [breakdownBy, setBreakdownBy] = useState<BreakdownDimensionId | "">("");
 
   const currentParams = useMemo<MetricsQueryParams>(() => {
     const startDate = new Date(dateRange.startDate).toISOString();
     const endDate = new Date(dateRange.endDate).toISOString();
     const params: MetricsQueryParams = { startDate, endDate };
-    if (metricSelection.metricName.trim()) {
-      params.name = metricSelection.metricName.trim();
+    if (selectedMetricNames.length === 0) {
+      params.empty = true;
+    } else {
+      params.names = selectedMetricNames;
     }
     return params;
-  }, [dateRange.startDate, dateRange.endDate, metricSelection.metricName]);
-
-  const previousParams = useMemo<MetricsQueryParams>(() => {
-    const prev = getPreviousPeriodRange(currentParams.startDate!, currentParams.endDate!);
-    return {
-      ...currentParams,
-      startDate: prev.startDate,
-      endDate: prev.endDate,
-    };
-  }, [currentParams]);
+  }, [dateRange.startDate, dateRange.endDate, selectedMetricNames]);
 
   return {
     filters: {
       preset,
       dateRange,
-      metricSelection,
+      selectedMetricNames,
       breakdownBy,
     },
     setPreset,
     setDateRange,
-    setMetricSelection,
+    setSelectedMetricNames,
     setBreakdownBy,
     currentParams,
-    previousParams,
   };
 }

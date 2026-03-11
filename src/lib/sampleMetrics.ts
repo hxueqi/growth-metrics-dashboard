@@ -4,20 +4,36 @@
  * One point per metric per day; same metric names in both windows.
  */
 
-import { SAMPLE_METRIC_NAMES } from "./constants";
-
-/** Two consecutive 30-day windows (current + previous) for 7d and 30d comparison. */
-const SAMPLE_DAYS = 60;
+import { SAMPLE_METRIC_NAMES, SAMPLE_DAYS } from "./constants";
 
 export interface SampleMetricPayload {
   name: string;
   value: number;
   timestamp: string;
+  unit: string;
   variant?: string | null;
   country?: string | null;
   device?: string | null;
   segment?: string | null;
 }
+
+/** Unit per sample metric name. Stored in DB (Count/Currency/Percentage/Seconds). */
+const SAMPLE_METRIC_UNIT: Record<string, string> = {
+  "Website Visits": "Count",
+  "Signups": "Count",
+  "Activated Users": "Count",
+  "Revenue": "Currency",
+  "Ad Spend": "Currency",
+  "Conversion Rate": "Percentage",
+  "Churn Rate": "Percentage",
+  "Page Load Time": "Seconds",
+};
+
+/** Legacy sample names to clear in date range when loading (no longer generated). */
+const LEGACY_SAMPLE_NAMES = ["Trial Conversions", "Monthly Revenue", "Demo Bookings"];
+
+/** Metric names to remove from the entire DB when Load Sample Dataset runs, so they never persist in the UI dropdown. */
+export const NAMES_TO_FULLY_REMOVE_ON_SAMPLE_LOAD = ["Demo Bookings", "staytime"];
 
 /** Value with slight upward trend: dayIndex 0 = oldest, dayIndex = SAMPLE_DAYS-1 = today. */
 function valueForDay(
@@ -46,13 +62,13 @@ function pointForMetricAndDay(
     name: metricName,
     value,
     timestamp: date.toISOString(),
+    unit: SAMPLE_METRIC_UNIT[metricName] ?? "Count",
   };
 }
 
 /**
- * Coherent funnel over the last SAMPLE_DAYS (60) days: current 30-day window
- * plus previous 30-day window. Same metric names in both; enables "Vs previous period"
- * for Last 7 days and Last 30 days.
+ * Coherent funnel over the last SAMPLE_DAYS (90) days: one point per metric per day.
+ * Enables time range filters (7d / 30d / 90d) and previous-period comparisons.
  */
 export function generateSampleMetrics(): SampleMetricPayload[] {
   const payloads: SampleMetricPayload[] = [];
@@ -77,21 +93,42 @@ export function generateSampleMetrics(): SampleMetricPayload[] {
     payloads.push(
       pointForMetricAndDay(
         "Activated Users",
-        valueForDay(28, 52, dayIndex),
+        valueForDay(38, 72, dayIndex),
         daysAgo
       )
     );
     payloads.push(
       pointForMetricAndDay(
-        "Demo Bookings",
-        valueForDay(10, 24, dayIndex),
+        "Revenue",
+        valueForDay(4200, 9800, dayIndex),
         daysAgo
       )
     );
     payloads.push(
       pointForMetricAndDay(
-        "Trial Conversions",
-        valueForDay(4, 12, dayIndex),
+        "Ad Spend",
+        valueForDay(800, 2200, dayIndex),
+        daysAgo
+      )
+    );
+    payloads.push(
+      pointForMetricAndDay(
+        "Conversion Rate",
+        Math.min(100, Math.max(0, valueForDay(3.2, 6.8, dayIndex))),
+        daysAgo
+      )
+    );
+    payloads.push(
+      pointForMetricAndDay(
+        "Churn Rate",
+        Math.min(100, Math.max(0, valueForDay(1.2, 3.5, dayIndex))),
+        daysAgo
+      )
+    );
+    payloads.push(
+      pointForMetricAndDay(
+        "Page Load Time",
+        valueForDay(1.2, 3.8, dayIndex),
         daysAgo
       )
     );
@@ -103,4 +140,9 @@ export function generateSampleMetrics(): SampleMetricPayload[] {
 /** Metric names used by the sample dataset (for safeguard checks). */
 export function getSampleMetricNames(): string[] {
   return [...SAMPLE_METRIC_NAMES];
+}
+
+/** Names to clear when loading sample data (current + legacy so old data is removed). */
+export function getSampleMetricNamesToClear(): string[] {
+  return [...SAMPLE_METRIC_NAMES, ...LEGACY_SAMPLE_NAMES];
 }

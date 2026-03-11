@@ -1,6 +1,16 @@
 /**
- * Chart data transformations. Used by MetricsChart and reusable for other analytics views.
- * Pure functions: metrics in -> series + series names out.
+ * Chart data transformation
+ *
+ * Responsibilities:
+ * - group metrics by metric name
+ * - bucket metrics by timestamp
+ * - resolve duplicate timestamps
+ * - convert raw metrics into chart series format
+ *
+ * Duplicate timestamp rule:
+ * If multiple records exist for the same metric and timestamp,
+ * the chart keeps the most recently created record (based on createdAt).
+ * This prevents duplicate submissions from inflating the chart values.
  */
 
 import type { Metric, BreakdownDimensionId } from "@/types/metric";
@@ -32,48 +42,55 @@ export function filterMetricsForChart(
   return out;
 }
 
-/** Build series: one row per timestamp, one column per metric name. Multiple points at same (time, name) are averaged. */
+/** Build series: one row per timestamp, one column per metric name. Multiple points at same (time, name) use the last value (by createdAt). */
 function buildSeriesByMetricName(metrics: Metric[]): ChartSeriesResult {
-  const rowSums = new Map<string, Map<string, { sum: number; count: number }>>();
-  for (const m of metrics) {
+  const byTime = new Map<string, Map<string, number>>();
+  const sorted = [...metrics].sort((a, b) => {
+    const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return tA - tB;
+  });
+  for (const m of sorted) {
     const key = new Date(m.timestamp).toISOString();
-    let row = rowSums.get(key);
+    let row = byTime.get(key);
     if (!row) {
       row = new Map();
-      rowSums.set(key, row);
+      byTime.set(key, row);
     }
-    const entry = row.get(m.name);
-    if (!entry) {
-      row.set(m.name, { sum: m.value, count: 1 });
-    } else {
-      entry.sum += m.value;
-      entry.count += 1;
-    }
+    row.set(m.name, m.value);
   }
+  const seriesNames = [...new Set(metrics.map((m) => m.name))];
   const series: Record<string, string | number>[] = [];
-  for (const [timeKey, nameMap] of rowSums.entries()) {
+  for (const [timeKey, nameMap] of byTime.entries()) {
     const row: Record<string, string | number> = { time: timeKey };
-    for (const [name, { sum, count }] of nameMap.entries()) {
-      row[name] = count > 0 ? sum / count : 0;
+    for (const [name, value] of nameMap.entries()) {
+      row[name] = value;
+    }
+    for (const name of seriesNames) {
+      if (row[name] === undefined || row[name] === null) row[name] = 0;
     }
     series.push(row);
   }
   series.sort(
     (a, b) => new Date(a.time as string).getTime() - new Date(b.time as string).getTime()
   );
-  const seriesNames = [...new Set(metrics.map((m) => m.name))];
   return { series, seriesNames };
 }
 
-/** Build series when breakdown is on: one row per timestamp, one column per segment value. */
+/** Build series when breakdown is on: one row per timestamp, one column per segment value. Duplicate (time, segment) use the last value (by createdAt). */
 function buildSeriesByBreakdown(
   metrics: Metric[],
   dimensionId: BreakdownDimensionId
 ): ChartSeriesResult {
   const rows = new Map<string, Record<string, string | number>>();
   const valueSet = new Set<string>();
+  const sorted = [...metrics].sort((a, b) => {
+    const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return tA - tB;
+  });
 
-  for (const m of metrics) {
+  for (const m of sorted) {
     const key = new Date(m.timestamp).toISOString();
     const segmentValue = getBreakdownValue(m, dimensionId);
     valueSet.add(segmentValue);
@@ -83,12 +100,7 @@ function buildSeriesByBreakdown(
       row = { time: key };
       rows.set(key, row);
     }
-    const existing = row[segmentValue];
-    if (existing !== undefined) {
-      row[segmentValue] = (Number(existing) + m.value) / 2;
-    } else {
-      row[segmentValue] = m.value;
-    }
+    row[segmentValue] = m.value;
   }
 
   const seriesNames = [...valueSet].filter((n) => n !== "—").sort((a, b) => a.localeCompare(b));

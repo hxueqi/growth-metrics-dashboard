@@ -21,7 +21,12 @@ interface UseMetricsResult {
  * Keeps data logic out of the Dashboard component.
  */
 export function useMetrics({ params }: UseMetricsOptions): UseMetricsResult {
-  const key = ["/api/metrics", params.name, params.startDate, params.endDate] as const;
+  const namesKey = params.empty
+    ? "empty"
+    : params.names?.length
+      ? [...params.names].sort().join(",")
+      : params.name ?? "all";
+  const key = ["/api/metrics", namesKey, params.startDate, params.endDate] as const;
 
   const { data, error, isLoading, mutate } = useSWR<Metric[]>(
     key,

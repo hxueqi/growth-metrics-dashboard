@@ -1,19 +1,42 @@
 import { prisma } from "@/lib/prisma";
+import { API_METRICS_LIMIT } from "@/lib/constants";
+
+const METRIC_UNITS = ["Count", "Percentage", "Currency", "Seconds"] as const;
+const UNIT_ALIASES: Record<string, (typeof METRIC_UNITS)[number]> = {
+  count: "Count",
+  percentage: "Percentage",
+  currency: "Currency",
+  seconds: "Seconds",
+};
+
+function normalizeUnit(raw: string | undefined): (typeof METRIC_UNITS)[number] {
+  if (!raw || typeof raw !== "string" || !raw.trim()) return "Count";
+  const key = raw.trim().toLowerCase();
+  return UNIT_ALIASES[key] ?? (METRIC_UNITS.includes(raw.trim() as (typeof METRIC_UNITS)[number]) ? (raw.trim() as (typeof METRIC_UNITS)[number]) : "Count");
+}
 
 /** Input for creating a new metric. */
 export interface CreateMetricData {
   name: string;
   value: number;
   timestamp?: Date;
+  unit?: string;
   variant?: string | null;
   country?: string | null;
   device?: string | null;
   segment?: string | null;
 }
 
+export interface MetricNameWithUnit {
+  name: string;
+  unit: string;
+}
+
 /** Filters for querying metrics. */
 export interface GetMetricsParams {
   name?: string;
+  /** When provided, filter to metrics whose name is in this array. */
+  names?: string[];
   startDate?: Date;
   endDate?: Date;
 }
@@ -22,10 +45,12 @@ export interface GetMetricsParams {
  * Create a new metric. Omitted timestamp defaults to now() in the schema.
  */
 export async function createMetric(data: CreateMetricData) {
+  const unit = normalizeUnit(data.unit);
   return prisma.metric.create({
     data: {
       name: data.name,
       value: data.value,
+      unit,
       ...(data.timestamp && { timestamp: data.timestamp }),
       ...(data.variant !== undefined && { variant: data.variant ?? null }),
       ...(data.country !== undefined && { country: data.country ?? null }),
@@ -35,13 +60,39 @@ export async function createMetric(data: CreateMetricData) {
   });
 }
 
+/** Input item for batch create (timestamp as Date). */
+export interface CreateMetricBatchItem extends Omit<CreateMetricData, "timestamp"> {
+  timestamp: Date;
+}
+
+/**
+ * Insert multiple metrics in a single query. Use for sample data or bulk import.
+ */
+export async function createMetricsBatch(data: CreateMetricBatchItem[]): Promise<{ count: number }> {
+  if (data.length === 0) return { count: 0 };
+  const rows = data.map((d) => ({
+    name: d.name,
+    value: d.value,
+    timestamp: d.timestamp,
+    unit: normalizeUnit(d.unit),
+    variant: d.variant ?? null,
+    country: d.country ?? null,
+    device: d.device ?? null,
+    segment: d.segment ?? null,
+  }));
+  const result = await prisma.metric.createMany({ data: rows });
+  return { count: result.count };
+}
+
 /**
  * Fetch metrics with optional filters. Always sorted by timestamp ascending.
  */
 export async function getMetrics(params?: GetMetricsParams) {
-  const where: { name?: string; timestamp?: { gte?: Date; lte?: Date } } = {};
+  const where: { name?: string | { in: string[] }; timestamp?: { gte?: Date; lte?: Date } } = {};
 
-  if (params?.name) {
+  if (params?.names?.length) {
+    where.name = { in: params.names };
+  } else if (params?.name) {
     where.name = params.name;
   }
 
@@ -54,8 +105,28 @@ export async function getMetrics(params?: GetMetricsParams) {
   return prisma.metric.findMany({
     where,
     orderBy: { timestamp: "asc" },
-    take: 5000,
+    take: API_METRICS_LIMIT,
   });
+}
+
+/**
+ * Get distinct metric names with unit (most recent unit per name). Sorted A–Z.
+ */
+export async function getDistinctMetricNamesWithUnits(): Promise<MetricNameWithUnit[]> {
+  const rows = await prisma.metric.findMany({
+    select: { name: true, unit: true },
+    orderBy: [{ name: "asc" }, { createdAt: "desc" }],
+  });
+  const byName = new Map<string, string>();
+  for (const r of rows) {
+    if (!byName.has(r.name)) byName.set(r.name, r.unit);
+  }
+  return Array.from(byName.entries()).map(([name, unit]) => ({ name, unit }));
+}
+
+export async function getDistinctMetricNames(): Promise<string[]> {
+  const result = await getDistinctMetricNamesWithUnits();
+  return result.map((r) => r.name);
 }
 
 /**
@@ -73,6 +144,18 @@ export async function deleteMetricsByNamesAndDateRange(
       name: { in: names },
       timestamp: { gte: startDate, lte: endDate },
     },
+  });
+  return result.count;
+}
+
+/**
+ * Delete all metrics with the given name (all data points for that metric).
+ * Used when a user removes a metric from the dataset.
+ */
+export async function deleteMetricsByName(name: string): Promise<number> {
+  if (!name || !name.trim()) return 0;
+  const result = await prisma.metric.deleteMany({
+    where: { name: name.trim() },
   });
   return result.count;
 }

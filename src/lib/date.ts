@@ -60,6 +60,19 @@ export function getDateRangeForPreset(days: number): { startDate: string; endDat
 }
 
 /**
+ * Range from (now - days) to now with span exactly equal to `days` in milliseconds.
+ * Use for APIs that validate "must not exceed N days" (e.g. reset-sample).
+ */
+export function getExactDaysRange(days: number): { startDate: string; endDate: string } {
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  return {
+    startDate: start.toISOString(),
+    endDate: end.toISOString(),
+  };
+}
+
+/**
  * Get the "previous period" range (same length as current, ending just before current start).
  * Used for trend and % change vs previous period.
  */

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Metric" ADD COLUMN IF NOT EXISTS "unit" TEXT NOT NULL DEFAULT 'Count';

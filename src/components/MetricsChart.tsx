@@ -12,7 +12,7 @@ import {
   Legend,
 } from "recharts";
 import type { Metric, BreakdownDimensionId } from "@/types/metric";
-import { formatTimestamp, formatChartAxisLabel, type ChartTimeRangePreset } from "@/lib/format";
+import { formatTimestamp, formatChartAxisLabel, formatChartYAxisValue, formatChartTooltipValue, type ChartTimeRangePreset } from "@/lib/format";
 import { CHART_COLORS } from "@/lib/constants";
 import { buildSeriesFromMetrics, type ChartDataOptions } from "@/lib/chartData";
 import { cn } from "@/lib/utils";
@@ -49,6 +49,8 @@ export interface MetricsChartMetricsProps {
   emptyState?: ChartEmptyStateConfig;
   /** Optional class for the chart container (e.g. full-screen height). */
   containerClassName?: string;
+  /** Metric name -> unit for Y-axis and tooltip formatting. */
+  metricUnits?: Record<string, string>;
   /** Pre-built data not used. */
   series?: never;
   seriesNames?: never;
@@ -64,6 +66,8 @@ export interface MetricsChartSeriesProps {
   useDualYAxis?: boolean;
   emptyState?: ChartEmptyStateConfig;
   containerClassName?: string;
+  /** Metric name -> unit for Y-axis and tooltip formatting. */
+  metricUnits?: Record<string, string>;
   series: Record<string, string | number>[];
   seriesNames: string[];
 }
@@ -84,12 +88,23 @@ export function MetricsChart(props: MetricsChartProps) {
     if (isSeriesProps(props)) {
       return { series: props.series, seriesNames: props.seriesNames };
     }
-    return buildSeriesFromMetrics(props.metrics, {
+    const metricsList = Array.isArray(props.metrics) ? props.metrics : [];
+    if (!Array.isArray(props.metrics)) {
+      console.warn("[MetricsChart] Expected metrics to be an array.", { received: props.metrics });
+    }
+    return buildSeriesFromMetrics(metricsList, {
       selectedName: props.selectedName,
       selectedVariant: props.selectedVariant,
       breakdownBy: props.breakdownBy,
     });
-  }, [props]);
+  }, [
+    props.metrics,
+    props.series,
+    props.seriesNames,
+    props.selectedName,
+    props.selectedVariant,
+    props.breakdownBy,
+  ]);
 
   const timeRangePreset = "timeRangePreset" in props ? props.timeRangePreset : undefined;
   const xAxisFormatter = useCallback(
@@ -99,9 +114,23 @@ export function MetricsChart(props: MetricsChartProps) {
 
   const emptyState = "emptyState" in props ? props.emptyState : undefined;
   const useDualYAxis = "useDualYAxis" in props ? props.useDualYAxis : false;
+  const metricUnits = "metricUnits" in props ? props.metricUnits : undefined;
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(() => new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const [hideYAxisLabels, setHideYAxisLabels] = useState(false);
+
+  /** Visible series (not hidden by legend). Used for unit detection. */
+  const visibleSeriesNames = useMemo(
+    () => seriesNames.filter((n) => !hiddenSeries.has(n)),
+    [seriesNames, hiddenSeries]
+  );
+  /** Single unit for Y-axis when all visible series share the same unit; otherwise undefined to avoid overlap. */
+  const activeUnit = useMemo(() => {
+    if (!metricUnits || visibleSeriesNames.length === 0) return undefined;
+    const units = new Set(visibleSeriesNames.map((n) => metricUnits[n]).filter(Boolean));
+    if (units.size !== 1) return undefined;
+    return [...units][0];
+  }, [metricUnits, visibleSeriesNames]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -114,9 +143,11 @@ export function MetricsChart(props: MetricsChartProps) {
     return () => ro.disconnect();
   }, []);
 
+  const effectiveDualYAxis = useDualYAxis;
+
   /** When useDualYAxis and multiple series, put largest-scale series on left axis, rest on right. */
   const { leftSeriesNames, rightSeriesNames } = useMemo(() => {
-    if (!useDualYAxis || seriesNames.length <= 1 || series.length === 0) {
+    if (!effectiveDualYAxis || seriesNames.length <= 1 || series.length === 0) {
       return { leftSeriesNames: seriesNames, rightSeriesNames: [] as string[] };
     }
     const maxBySeries = new Map<string, number>();
@@ -134,7 +165,7 @@ export function MetricsChart(props: MetricsChartProps) {
     const left = sorted.slice(0, 1);
     const right = sorted.slice(1);
     return { leftSeriesNames: left, rightSeriesNames: right };
-  }, [useDualYAxis, seriesNames, series]);
+  }, [effectiveDualYAxis, seriesNames, series]);
 
   const toggleSeries = useCallback((dataKey: string) => {
     setHiddenSeries((prev) => {
@@ -144,6 +175,11 @@ export function MetricsChart(props: MetricsChartProps) {
       return next;
     });
   }, []);
+
+  const yAxisTickFormatter = useCallback(
+    (v: number) => formatChartYAxisValue(v, activeUnit),
+    [activeUnit]
+  );
 
   const chartAriaLabel =
     isSeriesProps(props)
@@ -210,8 +246,8 @@ export function MetricsChart(props: MetricsChartProps) {
   };
 
   return (
-    <div ref={containerRef} className={containerClass} role="img" aria-label={chartAriaLabel}>
-      {/* ResponsiveContainer fills this div (100% width/height) so the chart is responsive */}
+    <div ref={containerRef} className={cn(containerClass, "flex flex-col")} role="img" aria-label={chartAriaLabel}>
+      <div className="min-h-0 flex-1">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={series}
@@ -239,7 +275,7 @@ export function MetricsChart(props: MetricsChartProps) {
             tickLine={false}
             tickCount={5}
             width={hideYAxisLabels ? 0 : 40}
-            tickFormatter={(v) => (Number.isInteger(v) ? String(v) : v.toFixed(2))}
+            tickFormatter={yAxisTickFormatter}
           />
           {rightSeriesNames.length > 0 && (
             <YAxis
@@ -250,7 +286,7 @@ export function MetricsChart(props: MetricsChartProps) {
               tickLine={false}
               tickCount={5}
               width={hideYAxisLabels ? 0 : 40}
-              tickFormatter={(v) => (Number.isInteger(v) ? String(v) : v.toFixed(2))}
+              tickFormatter={yAxisTickFormatter}
             />
           )}
           <Tooltip
@@ -262,20 +298,28 @@ export function MetricsChart(props: MetricsChartProps) {
                     {formatTimestamp(label)}
                   </p>
                   <div className="space-y-1">
-                    {payload.map((entry) => (
-                      <div
-                        key={entry.name}
-                        className="flex items-center justify-between gap-4"
-                      >
-                        <span
-                          className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: entry.color }}
-                        />
-                        <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                          {entry.name}: {String(entry.value)}
-                        </span>
-                      </div>
-                    ))}
+                    {payload.map((entry) => {
+                      const name = entry.name ?? "";
+                      const unit = metricUnits?.[name];
+                      const raw = typeof entry.value === "number" ? entry.value : Number(entry.value);
+                      const displayValue = Number.isFinite(raw)
+                        ? formatChartTooltipValue(raw, unit)
+                        : String(entry.value);
+                      return (
+                        <div
+                          key={name}
+                          className="flex items-center justify-between gap-4"
+                        >
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: entry.color }}
+                          />
+                          <span className="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
+                            {name}: {displayValue}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -290,8 +334,9 @@ export function MetricsChart(props: MetricsChartProps) {
               <span
                 role="button"
                 tabIndex={0}
+                title={value}
                 className={cn(
-                  "cursor-pointer rounded px-1.5 py-0.5 text-sm transition hover:bg-gray-100 hover:opacity-100 dark:hover:bg-gray-700",
+                  "cursor-pointer rounded px-1.5 py-0.5 text-sm transition hover:bg-gray-100 hover:opacity-100 dark:hover:bg-gray-700 max-w-[140px] truncate inline-block",
                   hiddenSeries.has(value)
                     ? "text-gray-400 line-through dark:text-gray-500"
                     : "text-gray-700 dark:text-gray-300"
@@ -329,6 +374,7 @@ export function MetricsChart(props: MetricsChartProps) {
           })}
         </LineChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 }
