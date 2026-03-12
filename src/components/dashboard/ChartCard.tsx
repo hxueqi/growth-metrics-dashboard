@@ -7,10 +7,6 @@ export interface ChartCardProps {
   title: string;
   /** Optional accessibility title (e.g. for tooltip); defaults to title */
   titleTitle?: string;
-  /** Inline color key: dot + label per metric (e.g. first 3 + "+N more") */
-  colorKeyItems?: { name: string; color: string }[];
-  /** Show "Click a metric in the legend to show or hide it." */
-  legendHint?: boolean;
   /** Called when fullscreen button is clicked; presence shows the button */
   onFullScreen?: () => void;
   /** Show "Updating…" indicator next to fullscreen when true */
@@ -22,22 +18,17 @@ export interface ChartCardProps {
 }
 
 /**
- * Reusable chart card: header (title, optional color key, legend hint, fullscreen)
- * and body (custom empty state or children). Keeps Dashboard layout consistent.
+ * Reusable chart card: header (title, fullscreen) and body (custom empty state or children).
  */
 export function ChartCard({
   title,
   titleTitle,
-  colorKeyItems,
-  legendHint,
   onFullScreen,
   loading = false,
   noMetricsEmptyState,
   children,
 }: ChartCardProps) {
   const displayTitle = titleTitle ?? title;
-  const showColorKey = colorKeyItems && colorKeyItems.length > 0;
-  const showMoreCount = showColorKey && colorKeyItems!.length > 3;
 
   return (
     <Card className="flex flex-col overflow-x-auto p-0">
@@ -49,34 +40,6 @@ export function ChartCard({
           >
             {title}
           </h3>
-          {showColorKey && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-              {colorKeyItems!.slice(0, 3).map(({ name, color }) => (
-                <span
-                  key={name}
-                  className="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300"
-                  title={name}
-                >
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: color }}
-                    aria-hidden
-                  />
-                  <span className="max-w-[120px] truncate sm:max-w-[140px]">{name}</span>
-                </span>
-              ))}
-              {showMoreCount && (
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  +{colorKeyItems!.length - 3} more
-                </span>
-              )}
-            </div>
-          )}
-          {legendHint && (
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-              Click a metric in the legend to show or hide it.
-            </p>
-          )}
         </div>
         {onFullScreen != null && (
           <div className="flex items-center gap-2">

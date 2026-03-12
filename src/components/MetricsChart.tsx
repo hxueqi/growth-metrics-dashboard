@@ -49,8 +49,14 @@ export interface MetricsChartMetricsProps {
   emptyState?: ChartEmptyStateConfig;
   /** Optional class for the chart container (e.g. full-screen height). */
   containerClassName?: string;
+  /** When true, show "Click a metric in the legend to show or hide it." below the legend. */
+  legendHint?: boolean;
   /** Metric name -> unit for Y-axis and tooltip formatting. */
   metricUnits?: Record<string, string>;
+  /** Start of chart range (ISO). When set with dateRangeEnd, single-point series are expanded to a full timeline. */
+  dateRangeStart?: string;
+  /** End of chart range (ISO). When set with dateRangeStart, single-point series are expanded to a full timeline. */
+  dateRangeEnd?: string;
   /** Pre-built data not used. */
   series?: never;
   seriesNames?: never;
@@ -66,6 +72,8 @@ export interface MetricsChartSeriesProps {
   useDualYAxis?: boolean;
   emptyState?: ChartEmptyStateConfig;
   containerClassName?: string;
+  /** When true, show "Click a metric in the legend to show or hide it." below the legend. */
+  legendHint?: boolean;
   /** Metric name -> unit for Y-axis and tooltip formatting. */
   metricUnits?: Record<string, string>;
   series: Record<string, string | number>[];
@@ -84,7 +92,7 @@ function isSeriesProps(props: MetricsChartProps): props is MetricsChartSeriesPro
  */
 
 export function MetricsChart(props: MetricsChartProps) {
-  const { series, seriesNames } = useMemo(() => {
+  const { series: rawSeries, seriesNames } = useMemo(() => {
     if (isSeriesProps(props)) {
       return { series: props.series, seriesNames: props.seriesNames };
     }
@@ -106,6 +114,84 @@ export function MetricsChart(props: MetricsChartProps) {
     props.breakdownBy,
   ]);
 
+  /**
+   * For series that only have a single non-null data point, expand the timeline so a line is drawn:
+   * use the dashboard date range to add rows with value 0 before/after the real point.
+   * Multi-point series are left unchanged.
+   */
+  const series = useMemo(() => {
+    if (!rawSeries || rawSeries.length === 0 || seriesNames.length === 0) return rawSeries;
+
+    const singlePointSeries = new Set<string>();
+    for (const name of seriesNames) {
+      let count = 0;
+      for (const row of rawSeries) {
+        const v = row[name];
+        if (typeof v === "number") {
+          count += 1;
+          if (count > 1) break;
+        }
+      }
+      if (count === 1) singlePointSeries.add(name);
+    }
+
+    if (singlePointSeries.size === 0) return rawSeries;
+
+    const dateRangeStart = "dateRangeStart" in props ? props.dateRangeStart : undefined;
+    const dateRangeEnd = "dateRangeEnd" in props ? props.dateRangeEnd : undefined;
+
+    if (dateRangeStart && dateRangeEnd && singlePointSeries.size > 0) {
+      const start = new Date(dateRangeStart);
+      const end = new Date(dateRangeEnd);
+      const timeSet = new Set<string>();
+
+      for (const row of rawSeries) {
+        const t = row.time;
+        if (typeof t === "string") timeSet.add(t);
+      }
+      const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+      for (let d = new Date(startDay); d.getTime() <= endDay.getTime(); d.setDate(d.getDate() + 1)) {
+        timeSet.add(new Date(d).toISOString());
+      }
+
+      const sortedTimes = [...timeSet].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      const byTime = new Map<string, Record<string, string | number>>();
+      for (const row of rawSeries) {
+        const t = row.time;
+        if (typeof t === "string") byTime.set(t, { ...row });
+      }
+
+      const expanded: Record<string, string | number>[] = [];
+      for (const time of sortedTimes) {
+        const existing = byTime.get(time);
+        const row: Record<string, string | number> = { time };
+        for (const name of seriesNames) {
+          if (existing && typeof existing[name] === "number") {
+            row[name] = existing[name];
+          } else {
+            row[name] = 0;
+          }
+        }
+        expanded.push(row);
+      }
+      return expanded;
+    }
+
+    return rawSeries.map((row) => {
+      const next = { ...row };
+      singlePointSeries.forEach((name) => {
+        if (typeof next[name] !== "number") next[name] = 0;
+      });
+      return next;
+    });
+  }, [
+    rawSeries,
+    seriesNames,
+    "dateRangeStart" in props ? props.dateRangeStart : undefined,
+    "dateRangeEnd" in props ? props.dateRangeEnd : undefined,
+  ]);
+
   const timeRangePreset = "timeRangePreset" in props ? props.timeRangePreset : undefined;
   const xAxisFormatter = useCallback(
     (value: string) => formatChartAxisLabel(value, timeRangePreset),
@@ -114,6 +200,7 @@ export function MetricsChart(props: MetricsChartProps) {
 
   const emptyState = "emptyState" in props ? props.emptyState : undefined;
   const useDualYAxis = "useDualYAxis" in props ? props.useDualYAxis : false;
+  const legendHint = "legendHint" in props ? props.legendHint : false;
   const metricUnits = "metricUnits" in props ? props.metricUnits : undefined;
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(() => new Set());
   const containerRef = useRef<HTMLDivElement>(null);
@@ -142,30 +229,6 @@ export function MetricsChart(props: MetricsChartProps) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  const effectiveDualYAxis = useDualYAxis;
-
-  /** When useDualYAxis and multiple series, put largest-scale series on left axis, rest on right. */
-  const { leftSeriesNames, rightSeriesNames } = useMemo(() => {
-    if (!effectiveDualYAxis || seriesNames.length <= 1 || series.length === 0) {
-      return { leftSeriesNames: seriesNames, rightSeriesNames: [] as string[] };
-    }
-    const maxBySeries = new Map<string, number>();
-    for (const name of seriesNames) {
-      let max = -Infinity;
-      for (const row of series) {
-        const v = row[name];
-        if (typeof v === "number" && v > max) max = v;
-      }
-      maxBySeries.set(name, max === -Infinity ? 0 : max);
-    }
-    const sorted = [...seriesNames].sort(
-      (a, b) => (maxBySeries.get(b) ?? 0) - (maxBySeries.get(a) ?? 0)
-    );
-    const left = sorted.slice(0, 1);
-    const right = sorted.slice(1);
-    return { leftSeriesNames: left, rightSeriesNames: right };
-  }, [effectiveDualYAxis, seriesNames, series]);
 
   const toggleSeries = useCallback((dataKey: string) => {
     setHiddenSeries((prev) => {
@@ -240,9 +303,7 @@ export function MetricsChart(props: MetricsChartProps) {
   const chartMargin = {
     ...CHART_MARGIN,
     left: hideYAxisLabels ? NARROW_MARGIN_LEFT : CHART_MARGIN.left,
-    right: rightSeriesNames.length > 0
-      ? hideYAxisLabels ? NARROW_MARGIN_RIGHT : 48
-      : hideYAxisLabels ? NARROW_MARGIN_RIGHT : CHART_MARGIN.right,
+    right: hideYAxisLabels ? NARROW_MARGIN_RIGHT : CHART_MARGIN.right,
   };
 
   return (
@@ -269,6 +330,7 @@ export function MetricsChart(props: MetricsChartProps) {
             minTickGap={50}
           />
           <YAxis
+            orientation="left"
             yAxisId="left"
             tick={!hideYAxisLabels ? AXIS_TICK_STYLE : false}
             axisLine={false}
@@ -277,18 +339,6 @@ export function MetricsChart(props: MetricsChartProps) {
             width={hideYAxisLabels ? 0 : 40}
             tickFormatter={yAxisTickFormatter}
           />
-          {rightSeriesNames.length > 0 && (
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              tick={!hideYAxisLabels ? AXIS_TICK_STYLE : false}
-              axisLine={false}
-              tickLine={false}
-              tickCount={5}
-              width={hideYAxisLabels ? 0 : 40}
-              tickFormatter={yAxisTickFormatter}
-            />
-          )}
           <Tooltip
             content={({ active, payload, label }) => {
               if (!active || !payload?.length || !label) return null;
@@ -330,47 +380,64 @@ export function MetricsChart(props: MetricsChartProps) {
             verticalAlign="top"
             align="right"
             wrapperStyle={{ paddingTop: 0 }}
-            formatter={(value) => (
-              <span
-                role="button"
-                tabIndex={0}
-                title={value}
-                className={cn(
-                  "cursor-pointer rounded px-1.5 py-0.5 text-sm transition hover:bg-gray-100 hover:opacity-100 dark:hover:bg-gray-700 max-w-[140px] truncate inline-block",
-                  hiddenSeries.has(value)
-                    ? "text-gray-400 line-through dark:text-gray-500"
-                    : "text-gray-700 dark:text-gray-300"
+            content={({ payload }) => (
+              <div className="flex flex-col items-end">
+                <div className="flex flex-wrap justify-end gap-x-2 gap-y-0.5">
+                  {payload?.map((entry, idx) => (
+                    <span
+                      key={entry.value}
+                      role="button"
+                      tabIndex={0}
+                      title={entry.value}
+                      className={cn(
+                        "inline-flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 text-sm transition hover:bg-gray-100 hover:opacity-100 dark:hover:bg-gray-700 max-w-[140px] truncate",
+                        hiddenSeries.has(entry.value)
+                          ? "text-gray-400 line-through dark:text-gray-500"
+                          : "text-gray-700 dark:text-gray-300"
+                      )}
+                      onClick={() => toggleSeries(entry.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleSeries(entry.value);
+                        }
+                      }}
+                    >
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: entry.color ?? CHART_COLORS[idx % CHART_COLORS.length] }}
+                        aria-hidden
+                      />
+                      <span className="truncate">{entry.value}</span>
+                    </span>
+                  ))}
+                </div>
+                {legendHint && (
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    Click a metric in the legend to show or hide it.
+                  </p>
                 )}
-                onClick={() => toggleSeries(value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    toggleSeries(value);
-                  }
-                }}
-              >
-                {value}
-              </span>
+              </div>
             )}
           />
           {seriesNames.map((name, i) => {
-            const yAxisId = rightSeriesNames.includes(name) ? "right" : "left";
-            return (
+              const lineColor = CHART_COLORS[i % CHART_COLORS.length];
+              return (
               <Line
                 key={name}
                 type="monotone"
                 dataKey={name}
-                yAxisId={yAxisId}
-                stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                yAxisId="left"
+                stroke={lineColor}
                 strokeWidth={2.5}
                 strokeOpacity={hiddenSeries.has(name) ? 0.25 : 1}
                 hide={hiddenSeries.has(name)}
-                dot={{ r: 3 }}
-                activeDot={{ r: 5, strokeWidth: 2 }}
+                dot={{ r: 3, fill: lineColor, strokeWidth: 0 }}
+                activeDot={{ r: 5, fill: lineColor, strokeWidth: 2, stroke: lineColor }}
                 name={name}
                 connectNulls
               />
-            );
+              );
           })}
         </LineChart>
       </ResponsiveContainer>

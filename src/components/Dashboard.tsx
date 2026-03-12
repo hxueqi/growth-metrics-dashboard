@@ -9,7 +9,6 @@ import { useMetricNames } from "@/hooks/useMetricNames";
 import { useDashboardFilters } from "@/hooks/useDashboardFilters";
 import { useDownloadReport } from "@/hooks/useDownloadReport";
 import { TIME_RANGE_PRESETS_MVP } from "@/lib/date";
-import { CHART_COLORS } from "@/lib/constants";
 import { COPY } from "@/lib/copy";
 import { getDefaultMetricSelection } from "@/lib/metricSelection";
 import { Skeleton } from "./ui/Skeleton";
@@ -38,6 +37,8 @@ const MetricsChart = dynamic(
 
 const SAMPLE_SUCCESS_DURATION_MS = 5000;
 
+const isDev = process.env.NODE_ENV === "development";
+
 export function Dashboard() {
   const filters = useDashboardFilters();
   const {
@@ -55,6 +56,8 @@ export function Dashboard() {
   const [sampleSuccessMessage, setSampleSuccessMessage] = useState<string | null>(null);
   const [sampleSkipMessage, setSampleSkipMessage] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [metricToDelete, setMetricToDelete] = useState<string | null>(null);
+  const [isDeletingMetric, setIsDeletingMetric] = useState(false);
   const [isChartFullScreen, setIsChartFullScreen] = useState(false);
   const [sampleJustLoaded, setSampleJustLoaded] = useState(false);
   const reportSectionRef = useRef<HTMLDivElement>(null);
@@ -122,22 +125,27 @@ export function Dashboard() {
     setFormError("");
   }, [revalidate, revalidateMetricNames]);
 
-  const onRemoveMetric = useCallback(
-    async (name: string) => {
-      try {
-        setRemoveError(null);
-        await metricsService.deleteMetricByName(name);
-        setSelectedMetricNames((prev) => prev.filter((n) => n !== name));
-        await revalidateMetricNames();
-        await revalidate();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Could not remove metric.";
-        setRemoveError(`Could not remove "${name}". ${message}`);
-        throw err;
-      }
-    },
-    [revalidate, revalidateMetricNames, setSelectedMetricNames]
-  );
+  const onRemoveMetric = useCallback((name: string) => {
+    setMetricToDelete(name);
+  }, []);
+
+  const confirmDeleteMetric = useCallback(async () => {
+    if (!metricToDelete) return;
+    setIsDeletingMetric(true);
+    setRemoveError(null);
+    try {
+      await metricsService.deleteMetricByName(metricToDelete);
+      setSelectedMetricNames((prev) => prev.filter((n) => n !== metricToDelete));
+      await revalidateMetricNames();
+      await revalidate();
+      setMetricToDelete(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not remove metric.";
+      setRemoveError(`Could not remove "${metricToDelete}". ${message}`);
+    } finally {
+      setIsDeletingMetric(false);
+    }
+  }, [metricToDelete, revalidate, revalidateMetricNames, setSelectedMetricNames]);
 
   const handleGenerateSample = useCallback(async () => {
     setIsGenerating(true);
@@ -211,15 +219,17 @@ export function Dashboard() {
             Growth Metrics
           </h1>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={handleGenerateSample}
-              disabled={isGenerating}
-              aria-label="Load sample acquisition and activation funnel for last 7 days"
-              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 disabled:opacity-50 dark:border-slate-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-            >
-              {isGenerating ? "Loading…" : "Load Sample Dataset"}
-            </button>
+            {isDev && (
+              <button
+                type="button"
+                onClick={handleGenerateSample}
+                disabled={isGenerating}
+                aria-label="Load sample acquisition and activation funnel for last 7 days"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 disabled:opacity-50 dark:border-slate-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                {isGenerating ? "Loading…" : "Load Sample Dataset"}
+              </button>
+            )}
             <button
               type="button"
               onClick={downloadReport}
@@ -260,7 +270,7 @@ export function Dashboard() {
             />
           </div>
         </div>
-        {generateError && (
+        {isDev && generateError && (
           <div className="mb-4">
             <ErrorBanner message={generateError} variant="error" />
           </div>
@@ -284,7 +294,7 @@ export function Dashboard() {
           </div>
         )}
 
-        {sampleSuccessMessage && (
+        {isDev && sampleSuccessMessage && (
           <div className="mb-4 rounded-xl border border-factorial-teal/30 bg-factorial-teal/10 p-4 dark:border-factorial-teal/40 dark:bg-factorial-teal/20">
             <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
               {sampleSuccessMessage}
@@ -292,7 +302,7 @@ export function Dashboard() {
           </div>
         )}
 
-        {sampleSkipMessage && (
+        {isDev && sampleSkipMessage && (
           <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
             <p className="text-sm font-medium text-gray-600 dark:text-gray-300">
               {sampleSkipMessage}
@@ -318,15 +328,6 @@ export function Dashboard() {
           <ChartCard
             title={showNoMetricsEmptyState ? COPY.emptyNoMetricsTitle : chartTitle}
             titleTitle={showNoMetricsEmptyState ? COPY.emptyNoMetricsTitle : chartTitle}
-            colorKeyItems={
-              !showNoMetricsEmptyState && selectedMetricNames.length >= 2
-                ? selectedMetricNames.map((name, i) => ({
-                    name,
-                    color: CHART_COLORS[i % CHART_COLORS.length],
-                  }))
-                : undefined
-            }
-            legendHint={!showNoMetricsEmptyState && selectedMetricNames.length > 1}
             onFullScreen={showNoMetricsEmptyState ? undefined : () => setIsChartFullScreen(true)}
             loading={isLoading && metrics.length > 0}
             noMetricsEmptyState={
@@ -335,14 +336,24 @@ export function Dashboard() {
                   <p className="text-sm text-slate-600 dark:text-slate-300">
                     {COPY.emptyNoMetricsCopy}
                   </p>
-                  <button
-                    type="button"
-                    onClick={handleGenerateSample}
-                    disabled={isGenerating}
-                    className="rounded-lg bg-factorial-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-factorial-accent-hover focus:outline-none focus:ring-2 focus:ring-factorial-accent focus:ring-offset-2 disabled:opacity-50 dark:bg-factorial-accent dark:hover:bg-factorial-accent-hover"
-                  >
-                    {isGenerating ? "Loading…" : COPY.emptyNoMetricsCta}
-                  </button>
+                  {isDev ? (
+                    <button
+                      type="button"
+                      onClick={handleGenerateSample}
+                      disabled={isGenerating}
+                      className="rounded-lg bg-factorial-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-factorial-accent-hover focus:outline-none focus:ring-2 focus:ring-factorial-accent focus:ring-offset-2 disabled:opacity-50 dark:bg-factorial-accent dark:hover:bg-factorial-accent-hover"
+                    >
+                      {isGenerating ? "Loading…" : COPY.emptyNoMetricsCta}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setRecordModalOpen(true)}
+                      className="rounded-lg bg-factorial-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-factorial-accent-hover focus:outline-none focus:ring-2 focus:ring-factorial-accent focus:ring-offset-2 dark:bg-factorial-accent dark:hover:bg-factorial-accent-hover"
+                    >
+                      Add metric
+                    </button>
+                  )}
                 </div>
               ) : undefined
             }
@@ -360,7 +371,10 @@ export function Dashboard() {
                 selectedName={undefined}
                 timeRangePreset={preset === "custom" ? "7d" : preset}
                 useDualYAxis={selectedMetricNames.length > 1}
+                legendHint={!showNoMetricsEmptyState && selectedMetricNames.length > 1}
                 metricUnits={Object.fromEntries(rawMetrics.map((m) => [m.name, m.unit]))}
+                dateRangeStart={currentParams.startDate}
+                dateRangeEnd={currentParams.endDate}
                 containerClassName="h-full min-h-[550px]"
                 emptyState={
                   selectedMetricNames.length === 0
@@ -372,15 +386,24 @@ export function Dashboard() {
                       ? {
                           primary: COPY.emptyChartNoDataPrimary,
                           secondary: COPY.emptyChartNoDataSecondary,
-                          primaryAction: {
-                            label: COPY.emptyChartLoadSampleLabel,
-                            onClick: handleGenerateSample,
-                            loading: isGenerating,
-                          },
-                          secondaryAction: {
-                            label: COPY.emptyChartAddDataLabel,
-                            onClick: () => setRecordModalOpen(true),
-                          },
+                          ...(isDev
+                            ? {
+                                primaryAction: {
+                                  label: COPY.emptyChartLoadSampleLabel,
+                                  onClick: handleGenerateSample,
+                                  loading: isGenerating,
+                                },
+                                secondaryAction: {
+                                  label: COPY.emptyChartAddDataLabel,
+                                  onClick: () => setRecordModalOpen(true),
+                                },
+                              }
+                            : {
+                                secondaryAction: {
+                                  label: COPY.emptyChartAddDataLabel,
+                                  onClick: () => setRecordModalOpen(true),
+                                },
+                              }),
                         }
                       : {
                           primary: COPY.emptyChartNoDataForRangePrimary,
@@ -406,11 +429,6 @@ export function Dashboard() {
               <h3 className="text-base font-semibold text-gray-900 dark:text-white sm:text-lg">
                 {chartTitle}
               </h3>
-              {selectedMetricNames.length > 1 && (
-                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                  Click a metric in the legend to show or hide it.
-                </p>
-              )}
             </div>
             <button
               type="button"
@@ -429,9 +447,12 @@ export function Dashboard() {
               selectedName={undefined}
               timeRangePreset={preset === "custom" ? "7d" : preset}
               useDualYAxis={selectedMetricNames.length > 1}
+              legendHint={selectedMetricNames.length > 1}
               metricUnits={Object.fromEntries(rawMetrics.map((m) => [m.name, m.unit]))}
+              dateRangeStart={currentParams.startDate}
+              dateRangeEnd={currentParams.endDate}
               containerClassName="h-full min-h-[400px]"
-emptyState={
+              emptyState={
                   selectedMetricNames.length === 0
                     ? {
                         primary: COPY.emptyChartSelectMetric,
@@ -441,15 +462,24 @@ emptyState={
                     ? {
                         primary: COPY.emptyChartNoDataPrimary,
                         secondary: COPY.emptyChartNoDataSecondary,
-                        primaryAction: {
-                          label: COPY.emptyChartLoadSampleLabel,
-                          onClick: handleGenerateSample,
-                          loading: isGenerating,
-                        },
-                        secondaryAction: {
-                          label: COPY.emptyChartAddDataLabel,
-                          onClick: () => setRecordModalOpen(true),
-                        },
+                        ...(isDev
+                          ? {
+                              primaryAction: {
+                                label: COPY.emptyChartLoadSampleLabel,
+                                onClick: handleGenerateSample,
+                                loading: isGenerating,
+                              },
+                              secondaryAction: {
+                                label: COPY.emptyChartAddDataLabel,
+                                onClick: () => setRecordModalOpen(true),
+                              },
+                            }
+                          : {
+                              secondaryAction: {
+                                label: COPY.emptyChartAddDataLabel,
+                                onClick: () => setRecordModalOpen(true),
+                              },
+                            }),
                       }
                     : {
                         primary: COPY.emptyChartNoDataForRangePrimary,
@@ -460,6 +490,34 @@ emptyState={
           </div>
         </div>
       )}
+
+      {/* Delete metric confirmation modal */}
+      <Modal
+        open={metricToDelete !== null}
+        onClose={() => setMetricToDelete(null)}
+        title="Delete metric"
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          Are you sure you want to delete &quot;{metricToDelete}&quot;? This action cannot be undone.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 dark:border-slate-600 dark:bg-gray-800 dark:text-slate-200 dark:hover:bg-gray-700"
+            onClick={() => setMetricToDelete(null)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-red-600 dark:hover:bg-red-700"
+            disabled={isDeletingMetric}
+            onClick={confirmDeleteMetric}
+          >
+            {isDeletingMetric ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      </Modal>
 
       {/* Add metric modal */}
       <Modal

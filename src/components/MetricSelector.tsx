@@ -36,6 +36,20 @@ function formatSummary(value: MetricSelection, placeholder: string): string {
 const SAME_UNIT_NOTE = "Only metrics with the same unit can be combined in a multi-metric chart.";
 const DISABLED_TOOLTIP = "Cannot combine different units on one chart.";
 
+/** Order for grouping metrics by unit in the dropdown. Unknown units sort last. */
+const UNIT_ORDER = ["count", "percentage", "currency", "seconds", "custom"];
+
+function sortMetricsByUnit(metrics: RawMetricOption[]): RawMetricOption[] {
+  return [...metrics].sort((a, b) => {
+    const unitA = (a.unit ?? "Count").trim().toLowerCase();
+    const unitB = (b.unit ?? "Count").trim().toLowerCase();
+    const iA = UNIT_ORDER.indexOf(unitA);
+    const iB = UNIT_ORDER.indexOf(unitB);
+    if (iA !== iB) return iA - iB;
+    return (a.name ?? "").localeCompare(b.name ?? "");
+  });
+}
+
 /**
  * Multi-select dropdown: show unit next to each metric (e.g. "Website Visits (count)").
  * Only allow multi-selection of metrics with the same unit.
@@ -91,7 +105,7 @@ export function MetricSelector({
     setRemoving(name);
     try {
       await onRemoveMetric(name);
-      onChange(value.filter((n) => n !== name));
+      // Parent is responsible for updating selection (e.g. after confirmation modal).
     } catch {
       // Delete failed; parent shows error. Do not update selection.
     } finally {
@@ -161,7 +175,7 @@ export function MetricSelector({
               Clear all
             </button>
           )}
-          {rawMetrics.map((m) => {
+          {sortMetricsByUnit(rawMetrics).map((m) => {
             const disabled = !canSelect(m.name);
             const labelText = `${m.name} (${formatUnit(m.unit)})`;
             const isRemoving = removing === m.name;
