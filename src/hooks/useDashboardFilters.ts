@@ -8,7 +8,7 @@ import {
   type DateRangeInput,
 } from "@/lib/date";
 import { DEFAULT_DATE_RANGE_DAYS } from "@/lib/constants";
-import type { MetricsQueryParams, BreakdownDimensionId } from "@/types/metric";
+import type { MetricsQueryParams } from "@/types/metric";
 
 const INITIAL_PRESET: TimeRangePreset = "7d";
 
@@ -27,7 +27,6 @@ export interface DashboardFiltersState {
   preset: TimeRangePreset;
   dateRange: DateRangeInput;
   selectedMetricNames: MetricSelection;
-  breakdownBy: BreakdownDimensionId | "";
 }
 
 export interface UseDashboardFiltersReturn {
@@ -35,7 +34,6 @@ export interface UseDashboardFiltersReturn {
   setPreset: (preset: TimeRangePreset) => void;
   setDateRange: (range: DateRangeInput | ((prev: DateRangeInput) => DateRangeInput)) => void;
   setSelectedMetricNames: (value: MetricSelection | ((prev: MetricSelection) => MetricSelection)) => void;
-  setBreakdownBy: (value: BreakdownDimensionId | "") => void;
   currentParams: MetricsQueryParams;
 }
 
@@ -47,7 +45,6 @@ export function useDashboardFilters(): UseDashboardFiltersReturn {
   const [preset, setPreset] = useState<TimeRangePreset>(INITIAL_PRESET);
   const [dateRange, setDateRange] = useState<DateRangeInput>(getInitialDateRange);
   const [selectedMetricNames, setSelectedMetricNames] = useState<MetricSelection>([]);
-  const [breakdownBy, setBreakdownBy] = useState<BreakdownDimensionId | "">("");
 
   const currentParams = useMemo<MetricsQueryParams>(() => {
     const startDate = new Date(dateRange.startDate).toISOString();
@@ -66,12 +63,10 @@ export function useDashboardFilters(): UseDashboardFiltersReturn {
       preset,
       dateRange,
       selectedMetricNames,
-      breakdownBy,
     },
     setPreset,
     setDateRange,
     setSelectedMetricNames,
-    setBreakdownBy,
     currentParams,
   };
 }

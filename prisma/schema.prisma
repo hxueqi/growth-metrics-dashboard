@@ -16,17 +16,9 @@ model Metric {
   value     Float
   timestamp DateTime @default(now())
   unit      String   @default("Count") // Count | Percentage | Currency | Seconds
-  variant   String?  // A/B tests or experiment segments
-  country   String?  // Segmentation: country
-  device    String?  // Segmentation: device type
-  segment   String?  // Custom segment label
   createdAt DateTime @default(now())
 
   @@index([timestamp])
   @@index([name])
-  @@index([variant])
-  @@index([country])
-  @@index([device])
-  @@index([segment])
   @@index([createdAt])
 }

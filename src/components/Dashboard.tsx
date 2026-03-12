@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import { useSWRConfig } from "swr";
 import { metricsService } from "@/services";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useMetricNames } from "@/hooks/useMetricNames";
@@ -35,10 +34,6 @@ const MetricsChart = dynamic(
   }
 );
 
-const SAMPLE_SUCCESS_DURATION_MS = 5000;
-
-const isDev = process.env.NODE_ENV === "development";
-
 export function Dashboard() {
   const filters = useDashboardFilters();
   const {
@@ -51,23 +46,12 @@ export function Dashboard() {
 
   const [recordModalOpen, setRecordModalOpen] = useState(false);
   const [formError, setFormError] = useState("");
-  const [generateError, setGenerateError] = useState<string | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [sampleSuccessMessage, setSampleSuccessMessage] = useState<string | null>(null);
-  const [sampleSkipMessage, setSampleSkipMessage] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [metricToDelete, setMetricToDelete] = useState<string | null>(null);
   const [isDeletingMetric, setIsDeletingMetric] = useState(false);
   const [isChartFullScreen, setIsChartFullScreen] = useState(false);
-  const [sampleJustLoaded, setSampleJustLoaded] = useState(false);
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const initialLoadDoneRef = useRef(false);
-
-  useEffect(() => {
-    if (!sampleSuccessMessage) return;
-    const t = setTimeout(() => setSampleSuccessMessage(null), SAMPLE_SUCCESS_DURATION_MS);
-    return () => clearTimeout(t);
-  }, [sampleSuccessMessage]);
 
   useEffect(() => {
     if (!isChartFullScreen) return;
@@ -82,12 +66,6 @@ export function Dashboard() {
     };
   }, [isChartFullScreen]);
 
-  // Clear skip message when user changes filters (they’re exploring)
-  useEffect(() => {
-    setSampleSkipMessage(null);
-  }, [preset, selectedMetricNames]);
-
-  const { mutate: mutateGlobal } = useSWRConfig();
   const { metrics, error, isLoading, revalidate } = useMetrics({ params: currentParams });
   const { names: metricOptions, rawMetrics, isLoading: isLoadingMetricNames, error: metricNamesError, revalidate: revalidateMetricNames } = useMetricNames();
 
@@ -111,13 +89,6 @@ export function Dashboard() {
     initialLoadDoneRef.current = true;
   }, [rawMetrics, setSelectedMetricNames]);
 
-  useEffect(() => {
-    const list = Array.isArray(rawMetrics) ? rawMetrics : [];
-    if (!sampleJustLoaded || list.length === 0) return;
-    setSelectedMetricNames(getDefaultMetricSelection(list));
-    setSampleJustLoaded(false);
-  }, [sampleJustLoaded, rawMetrics, setSelectedMetricNames]);
-
   const onMetricCreated = useCallback(() => {
     revalidate();
     revalidateMetricNames();
@@ -125,9 +96,7 @@ export function Dashboard() {
     setFormError("");
   }, [revalidate, revalidateMetricNames]);
 
-  const onRemoveMetric = useCallback((name: string) => {
-    setMetricToDelete(name);
-  }, []);
+  const onRemoveMetric = useCallback((name: string) => setMetricToDelete(name), []);
 
   const confirmDeleteMetric = useCallback(async () => {
     if (!metricToDelete) return;
@@ -146,37 +115,6 @@ export function Dashboard() {
       setIsDeletingMetric(false);
     }
   }, [metricToDelete, revalidate, revalidateMetricNames, setSelectedMetricNames]);
-
-  const handleGenerateSample = useCallback(async () => {
-    setIsGenerating(true);
-    setGenerateError(null);
-    setSampleSuccessMessage(null);
-    setSampleSkipMessage(null);
-    try {
-      const result = await metricsService.createSampleMetrics();
-      await revalidateMetricNames();
-      mutateGlobal(
-        (key) => Array.isArray(key) && key[0] === "/api/metrics",
-        undefined,
-        { revalidate: true }
-      );
-      if (result.skipped) {
-        setSampleSkipMessage("Sample dataset already loaded. Change metric or time range to explore.");
-      } else if (result.created > 0) {
-        setSampleSuccessMessage("Sample dataset loaded. Explore the metrics below.");
-        setSampleJustLoaded(true);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load sample dataset";
-      const friendlyMessage =
-        message === "Unauthorized." || message === "Forbidden."
-          ? "Sample data is not available in this environment."
-          : message;
-      setGenerateError(friendlyMessage);
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [revalidateMetricNames, mutateGlobal]);
 
   const timeRangeLabel =
     TIME_RANGE_PRESETS_MVP.find((p) => p.value === (preset === "custom" ? "7d" : preset))?.label ??
@@ -219,17 +157,6 @@ export function Dashboard() {
             Growth Metrics
           </h1>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            {isDev && (
-              <button
-                type="button"
-                onClick={handleGenerateSample}
-                disabled={isGenerating}
-                aria-label="Load sample acquisition and activation funnel for last 7 days"
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 disabled:opacity-50 dark:border-slate-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-              >
-                {isGenerating ? "Loading…" : "Load Sample Dataset"}
-              </button>
-            )}
             <button
               type="button"
               onClick={downloadReport}
@@ -270,11 +197,6 @@ export function Dashboard() {
             />
           </div>
         </div>
-        {isDev && generateError && (
-          <div className="mb-4">
-            <ErrorBanner message={generateError} variant="error" />
-          </div>
-        )}
         {downloadError && (
           <div className="mb-4">
             <ErrorBanner
@@ -291,22 +213,6 @@ export function Dashboard() {
               onRetry={() => setRemoveError(null)}
               variant="error"
             />
-          </div>
-        )}
-
-        {isDev && sampleSuccessMessage && (
-          <div className="mb-4 rounded-xl border border-factorial-teal/30 bg-factorial-teal/10 p-4 dark:border-factorial-teal/40 dark:bg-factorial-teal/20">
-            <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
-              {sampleSuccessMessage}
-            </p>
-          </div>
-        )}
-
-        {isDev && sampleSkipMessage && (
-          <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-            <p className="text-sm font-medium text-gray-600 dark:text-gray-300">
-              {sampleSkipMessage}
-            </p>
           </div>
         )}
 
@@ -336,24 +242,13 @@ export function Dashboard() {
                   <p className="text-sm text-slate-600 dark:text-slate-300">
                     {COPY.emptyNoMetricsCopy}
                   </p>
-                  {isDev ? (
-                    <button
-                      type="button"
-                      onClick={handleGenerateSample}
-                      disabled={isGenerating}
-                      className="rounded-lg bg-factorial-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-factorial-accent-hover focus:outline-none focus:ring-2 focus:ring-factorial-accent focus:ring-offset-2 disabled:opacity-50 dark:bg-factorial-accent dark:hover:bg-factorial-accent-hover"
-                    >
-                      {isGenerating ? "Loading…" : COPY.emptyNoMetricsCta}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setRecordModalOpen(true)}
-                      className="rounded-lg bg-factorial-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-factorial-accent-hover focus:outline-none focus:ring-2 focus:ring-factorial-accent focus:ring-offset-2 dark:bg-factorial-accent dark:hover:bg-factorial-accent-hover"
-                    >
-                      Add metric
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setRecordModalOpen(true)}
+                    className="rounded-lg bg-factorial-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-factorial-accent-hover focus:outline-none focus:ring-2 focus:ring-factorial-accent focus:ring-offset-2 dark:bg-factorial-accent dark:hover:bg-factorial-accent-hover"
+                  >
+                    Add metric
+                  </button>
                 </div>
               ) : undefined
             }
@@ -386,24 +281,10 @@ export function Dashboard() {
                       ? {
                           primary: COPY.emptyChartNoDataPrimary,
                           secondary: COPY.emptyChartNoDataSecondary,
-                          ...(isDev
-                            ? {
-                                primaryAction: {
-                                  label: COPY.emptyChartLoadSampleLabel,
-                                  onClick: handleGenerateSample,
-                                  loading: isGenerating,
-                                },
-                                secondaryAction: {
-                                  label: COPY.emptyChartAddDataLabel,
-                                  onClick: () => setRecordModalOpen(true),
-                                },
-                              }
-                            : {
-                                secondaryAction: {
-                                  label: COPY.emptyChartAddDataLabel,
-                                  onClick: () => setRecordModalOpen(true),
-                                },
-                              }),
+                          secondaryAction: {
+                            label: COPY.emptyChartAddDataLabel,
+                            onClick: () => setRecordModalOpen(true),
+                          },
                         }
                       : {
                           primary: COPY.emptyChartNoDataForRangePrimary,
@@ -462,24 +343,10 @@ export function Dashboard() {
                     ? {
                         primary: COPY.emptyChartNoDataPrimary,
                         secondary: COPY.emptyChartNoDataSecondary,
-                        ...(isDev
-                          ? {
-                              primaryAction: {
-                                label: COPY.emptyChartLoadSampleLabel,
-                                onClick: handleGenerateSample,
-                                loading: isGenerating,
-                              },
-                              secondaryAction: {
-                                label: COPY.emptyChartAddDataLabel,
-                                onClick: () => setRecordModalOpen(true),
-                              },
-                            }
-                          : {
-                              secondaryAction: {
-                                label: COPY.emptyChartAddDataLabel,
-                                onClick: () => setRecordModalOpen(true),
-                              },
-                            }),
+                        secondaryAction: {
+                          label: COPY.emptyChartAddDataLabel,
+                          onClick: () => setRecordModalOpen(true),
+                        },
                       }
                     : {
                         primary: COPY.emptyChartNoDataForRangePrimary,

@@ -17,17 +17,11 @@ function normalizeUnit(raw: unknown): (typeof METRIC_UNITS)[number] {
   return UNIT_ALIASES[key] ?? (METRIC_UNITS.includes(raw.trim() as (typeof METRIC_UNITS)[number]) ? (raw.trim() as (typeof METRIC_UNITS)[number]) : "Count");
 }
 
-function optionalString(v: unknown): string | undefined {
-  if (v === undefined || v === null) return undefined;
-  const s = String(v).trim();
-  return s === "" ? undefined : s;
-}
-
 /** Validate a single metric object. Returns validated data or error. */
 function validateOne(
   item: unknown,
   index: number
-): { ok: true; data: { name: string; value: number; timestamp: Date; unit: string; variant: string | null; country: string | null; device: string | null; segment: string | null } } | { ok: false; error: string } {
+): { ok: true; data: { name: string; value: number; timestamp: Date; unit: string } } | { ok: false; error: string } {
   if (item === null || typeof item !== "object" || Array.isArray(item)) {
     return { ok: false, error: `metrics[${index}]: must be an object.` };
   }
@@ -52,12 +46,6 @@ function validateOne(
   if (!isValidDateString(timestamp)) {
     return { ok: false, error: `metrics[${index}]: timestamp must be a valid ISO date string.` };
   }
-  for (const key of ["variant", "country", "device", "segment"] as const) {
-    const val = b[key];
-    if (val !== undefined && val !== null && typeof val !== "string") {
-      return { ok: false, error: `metrics[${index}]: ${key} must be a string when provided.` };
-    }
-  }
 
   const unit = normalizeUnit(b.unit);
   return {
@@ -67,17 +55,13 @@ function validateOne(
       value,
       timestamp: new Date(timestamp.trim()),
       unit,
-      variant: optionalString(b.variant) ?? null,
-      country: optionalString(b.country) ?? null,
-      device: optionalString(b.device) ?? null,
-      segment: optionalString(b.segment) ?? null,
     },
   };
 }
 
 /**
  * POST /api/metrics/batch
- * Body: { metrics: Array<{ name, value, timestamp; optional: unit, variant, country, device, segment }> }
+ * Body: { metrics: Array<{ name, value, timestamp; optional: unit }> }
  * Inserts all metrics in a single query. Returns { count }.
  */
 export async function POST(request: NextRequest) {
@@ -114,7 +98,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const validated: { name: string; value: number; timestamp: Date; unit: string; variant: string | null; country: string | null; device: string | null; segment: string | null }[] = [];
+    const validated: { name: string; value: number; timestamp: Date; unit: string }[] = [];
     for (let i = 0; i < raw.length; i++) {
       const result = validateOne(raw[i], i);
       if (!result.ok) {

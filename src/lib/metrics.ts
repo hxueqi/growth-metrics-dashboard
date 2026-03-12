@@ -82,15 +82,6 @@ export function getUniqueMetricNames(metrics: Metric[]): string[] {
 }
 
 /**
- * Get unique variants from a list (excluding null/empty), sorted.
- */
-export function getUniqueVariants(metrics: Metric[]): string[] {
-  return [...new Set(metrics.map((m) => m.variant).filter(Boolean) as string[])].sort((a, b) =>
-    a.localeCompare(b)
-  );
-}
-
-/**
  * Sum of values for metrics matching a given name.
  */
 function sumByMetricName(metrics: Metric[], name: string): number {

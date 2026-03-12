@@ -10,10 +10,6 @@ export interface Metric {
   value: number;
   timestamp: string;
   unit?: string;
-  variant: string | null;
-  country: string | null;
-  device: string | null;
-  segment: string | null;
   createdAt: string;
 }
 
@@ -23,10 +19,6 @@ export interface CreateMetricPayload {
   value: number;
   timestamp: string;
   unit?: string;
-  variant?: string | null;
-  country?: string | null;
-  device?: string | null;
-  segment?: string | null;
 }
 
 /** Raw metric option for selector (name + unit). */
@@ -36,16 +28,6 @@ export interface RawMetricOption {
 }
 
 export const METRIC_UNIT_OPTIONS = ["Count", "Percentage", "Currency", "Seconds"] as const;
-
-/** Breakdown / segmentation dimensions. Extensible: add key + field on Metric. */
-export type BreakdownDimensionId = "variant" | "country" | "device" | "segment";
-
-export interface BreakdownDimensionConfig {
-  id: BreakdownDimensionId;
-  label: string;
-  /** Field on Metric that holds the segment value. */
-  field: keyof Pick<Metric, "variant" | "country" | "device" | "segment">;
-}
 
 /** Query parameters for fetching metrics (GET /api/metrics). */
 export interface MetricsQueryParams {

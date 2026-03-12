@@ -8,6 +8,4 @@ export type {
   CreateMetricPayload,
   MetricsQueryParams,
   MetricSummaryStats,
-  BreakdownDimensionId,
-  BreakdownDimensionConfig,
 } from "./metric";

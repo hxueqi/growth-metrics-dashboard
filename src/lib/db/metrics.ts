@@ -21,10 +21,6 @@ export interface CreateMetricData {
   value: number;
   timestamp?: Date;
   unit?: string;
-  variant?: string | null;
-  country?: string | null;
-  device?: string | null;
-  segment?: string | null;
 }
 
 export interface MetricNameWithUnit {
@@ -52,10 +48,6 @@ export async function createMetric(data: CreateMetricData) {
       value: data.value,
       unit,
       ...(data.timestamp && { timestamp: data.timestamp }),
-      ...(data.variant !== undefined && { variant: data.variant ?? null }),
-      ...(data.country !== undefined && { country: data.country ?? null }),
-      ...(data.device !== undefined && { device: data.device ?? null }),
-      ...(data.segment !== undefined && { segment: data.segment ?? null }),
     },
   });
 }
@@ -75,10 +67,6 @@ export async function createMetricsBatch(data: CreateMetricBatchItem[]): Promise
     value: d.value,
     timestamp: d.timestamp,
     unit: normalizeUnit(d.unit),
-    variant: d.variant ?? null,
-    country: d.country ?? null,
-    device: d.device ?? null,
-    segment: d.segment ?? null,
   }));
   const result = await prisma.metric.createMany({ data: rows });
   return { count: result.count };

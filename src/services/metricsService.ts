@@ -10,11 +10,6 @@ import type {
   MetricsQueryParams,
 } from "@/types/metric";
 
-export interface CreateSampleMetricsResult {
-  created: number;
-  skipped: boolean;
-}
-
 /** Fetch distinct metric names (for selector and form suggestions). */
 export async function fetchMetricNames(): Promise<string[]> {
   return api.fetchMetricNames();
@@ -38,14 +33,4 @@ export async function createMetric(payload: CreateMetricPayload): Promise<Metric
 /** Delete all data points for a metric by name. */
 export async function deleteMetricByName(name: string): Promise<{ deleted: number }> {
   return api.deleteMetricByName(name);
-}
-
-/**
- * Load the sample dataset. Calls the server-only POST /api/load-sample so the button works
- * in production without exposing RESET_SAMPLE_SECRET to the client. Server clears and inserts
- * 90 days of demo data when RESET_SAMPLE_SECRET is set (production) or always (development).
- */
-export async function createSampleMetrics(): Promise<CreateSampleMetricsResult> {
-  const { created } = await api.loadSample();
-  return { created, skipped: false };
 }

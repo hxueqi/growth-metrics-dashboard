@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import type { Metric, BreakdownDimensionId } from "@/types/metric";
+import type { Metric } from "@/types/metric";
 import { formatTimestamp, formatChartAxisLabel, formatChartYAxisValue, formatChartTooltipValue, type ChartTimeRangePreset } from "@/lib/format";
 import { CHART_COLORS } from "@/lib/constants";
 import { buildSeriesFromMetrics, type ChartDataOptions } from "@/lib/chartData";
@@ -39,8 +39,6 @@ export interface ChartEmptyStateConfig {
 export interface MetricsChartMetricsProps {
   metrics: Metric[];
   selectedName?: string;
-  selectedVariant?: string;
-  breakdownBy?: BreakdownDimensionId | null;
   /** Current time range preset for X-axis label formatting (7d/30d = "MMM dd" only). */
   timeRangePreset?: ChartTimeRangePreset;
   /** When true (e.g. "All metrics"), use a secondary Y-axis for smaller-scale series. */
@@ -66,8 +64,6 @@ export interface MetricsChartMetricsProps {
 export interface MetricsChartSeriesProps {
   metrics?: never;
   selectedName?: never;
-  selectedVariant?: never;
-  breakdownBy?: never;
   timeRangePreset?: ChartTimeRangePreset;
   useDualYAxis?: boolean;
   emptyState?: ChartEmptyStateConfig;
@@ -102,16 +98,12 @@ export function MetricsChart(props: MetricsChartProps) {
     }
     return buildSeriesFromMetrics(metricsList, {
       selectedName: props.selectedName,
-      selectedVariant: props.selectedVariant,
-      breakdownBy: props.breakdownBy,
     });
   }, [
     props.metrics,
     props.series,
     props.seriesNames,
     props.selectedName,
-    props.selectedVariant,
-    props.breakdownBy,
   ]);
 
   /**

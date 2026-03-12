@@ -13,13 +13,10 @@
  * This prevents duplicate submissions from inflating the chart values.
  */
 
-import type { Metric, BreakdownDimensionId } from "@/types/metric";
-import { getBreakdownValue } from "@/lib/breakdown";
+import type { Metric } from "@/types/metric";
 
 export interface ChartDataOptions {
   selectedName?: string;
-  selectedVariant?: string;
-  breakdownBy?: BreakdownDimensionId | null;
 }
 
 export interface ChartSeriesResult {
@@ -27,19 +24,13 @@ export interface ChartSeriesResult {
   seriesNames: string[];
 }
 
-/** Filter metrics by optional name and variant. */
+/** Filter metrics by optional name. */
 export function filterMetricsForChart(
   metrics: Metric[],
-  options: Pick<ChartDataOptions, "selectedName" | "selectedVariant">
+  options: Pick<ChartDataOptions, "selectedName">
 ): Metric[] {
-  let out = metrics;
-  if (options.selectedName?.trim()) {
-    out = out.filter((m) => m.name === options.selectedName);
-    if (options.selectedVariant?.trim()) {
-      out = out.filter((m) => m.variant === options.selectedVariant);
-    }
-  }
-  return out;
+  if (!options.selectedName?.trim()) return metrics;
+  return metrics.filter((m) => m.name === options.selectedName);
 }
 
 /** Build series: one row per timestamp, one column per metric name. Multiple points at same (time, name) use the last value (by createdAt). */
@@ -77,41 +68,6 @@ function buildSeriesByMetricName(metrics: Metric[]): ChartSeriesResult {
   return { series, seriesNames };
 }
 
-/** Build series when breakdown is on: one row per timestamp, one column per segment value. Duplicate (time, segment) use the last value (by createdAt). */
-function buildSeriesByBreakdown(
-  metrics: Metric[],
-  dimensionId: BreakdownDimensionId
-): ChartSeriesResult {
-  const rows = new Map<string, Record<string, string | number>>();
-  const valueSet = new Set<string>();
-  const sorted = [...metrics].sort((a, b) => {
-    const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return tA - tB;
-  });
-
-  for (const m of sorted) {
-    const key = new Date(m.timestamp).toISOString();
-    const segmentValue = getBreakdownValue(m, dimensionId);
-    valueSet.add(segmentValue);
-
-    let row = rows.get(key);
-    if (!row) {
-      row = { time: key };
-      rows.set(key, row);
-    }
-    row[segmentValue] = m.value;
-  }
-
-  const seriesNames = [...valueSet].filter((n) => n !== "—").sort((a, b) => a.localeCompare(b));
-  if (valueSet.has("—")) seriesNames.push("—");
-
-  const series = Array.from(rows.values()).sort(
-    (a, b) => new Date(a.time as string).getTime() - new Date(b.time as string).getTime()
-  );
-  return { series, seriesNames };
-}
-
 /**
  * Build chart series and series names from metrics and options.
  * Reusable for any view that needs time-series line chart data.
@@ -121,8 +77,5 @@ export function buildSeriesFromMetrics(
   options: ChartDataOptions = {}
 ): ChartSeriesResult {
   const filtered = filterMetricsForChart(metrics, options);
-  if (options.breakdownBy?.trim()) {
-    return buildSeriesByBreakdown(filtered, options.breakdownBy as BreakdownDimensionId);
-  }
   return buildSeriesByMetricName(filtered);
 }

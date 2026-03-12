@@ -11,15 +11,13 @@ export const COPY = {
   /** Chart card title when the database has no metrics. */
   emptyNoMetricsTitle: "No metrics yet",
   /** CTA button label in the no-metrics empty state. */
-  emptyNoMetricsCta: "Load sample dataset to get started",
+  emptyNoMetricsCta: "Add metric",
   /** Short copy in the no-metrics empty state (above the CTA). */
-  emptyNoMetricsCopy: "We'll add example metrics so you can try the chart.",
+  emptyNoMetricsCopy: "Add your first metric to get started.",
   /** Chart empty state when there is no data in the selected time range (primary). */
   emptyChartNoDataPrimary: "No data in this time range",
   /** Chart empty state when there is no data in the selected time range (secondary). */
-  emptyChartNoDataSecondary: "Add a metric or load the sample dataset to explore the funnel.",
-  /** Label for the load sample dataset button in chart empty states. */
-  emptyChartLoadSampleLabel: "Load sample dataset",
+  emptyChartNoDataSecondary: "Add a metric or change the time range to see data.",
   /** Label for the add data point button in chart empty states. */
   emptyChartAddDataLabel: "Add data point",
   /** Chart empty state when no data for selected metrics in range (primary). */

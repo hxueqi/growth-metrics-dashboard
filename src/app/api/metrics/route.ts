@@ -30,16 +30,6 @@ interface CreateMetricBody {
   value: number;
   timestamp: string;
   unit?: string;
-  variant?: string;
-  country?: string;
-  device?: string;
-  segment?: string;
-}
-
-function optionalString(v: unknown): string | undefined {
-  if (v === undefined || v === null) return undefined;
-  const s = String(v).trim();
-  return s === "" ? undefined : s;
 }
 
 function validateCreateBody(body: unknown): { ok: true; data: CreateMetricBody } | { ok: false; status: number; error: string } {
@@ -71,13 +61,6 @@ function validateCreateBody(body: unknown): { ok: true; data: CreateMetricBody }
     return { ok: false, status: 400, error: "timestamp must be a valid ISO date string." };
   }
 
-  for (const key of ["variant", "country", "device", "segment"] as const) {
-    const val = b[key];
-    if (val !== undefined && val !== null && typeof val !== "string") {
-      return { ok: false, status: 400, error: `${key} must be a string when provided.` };
-    }
-  }
-
   const unit = normalizeUnit(b.unit);
 
   return {
@@ -87,10 +70,6 @@ function validateCreateBody(body: unknown): { ok: true; data: CreateMetricBody }
       value,
       timestamp: timestamp.trim(),
       unit,
-      variant: optionalString(b.variant),
-      country: optionalString(b.country),
-      device: optionalString(b.device),
-      segment: optionalString(b.segment),
     },
   };
 }
@@ -132,9 +111,12 @@ export async function GET(request: NextRequest) {
     });
 
     const serialized = metrics.map((m) => ({
-      ...m,
+      id: m.id,
+      name: m.name,
       value: m.value ?? 0,
       unit: (m.unit ?? "Count").toString().toLowerCase(),
+      timestamp: m.timestamp.toISOString(),
+      createdAt: m.createdAt.toISOString(),
     }));
     return NextResponse.json(serialized);
   } catch (error) {
@@ -148,7 +130,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/metrics
- * Body: { name: string, value: number, timestamp: string, variant?: string }
+ * Body: { name: string, value: number, timestamp: string, unit?: string }
  */
 export async function POST(request: NextRequest) {
   try {
@@ -170,23 +152,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { name, value, timestamp, unit, variant, country, device, segment } = validated.data;
+    const { name, value, timestamp, unit } = validated.data;
 
     const metric = await createMetric({
       name,
       value,
       timestamp: new Date(timestamp),
       unit,
-      variant: variant ?? null,
-      country: country ?? null,
-      device: device ?? null,
-      segment: segment ?? null,
     });
 
     const serialized = {
-      ...metric,
+      id: metric.id,
+      name: metric.name,
       value: metric.value ?? 0,
       unit: (metric.unit ?? "Count").toString().toLowerCase(),
+      timestamp: metric.timestamp.toISOString(),
+      createdAt: metric.createdAt.toISOString(),
     };
     return NextResponse.json(serialized);
   } catch (error) {

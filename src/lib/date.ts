@@ -61,7 +61,7 @@ export function getDateRangeForPreset(days: number): { startDate: string; endDat
 
 /**
  * Range from (now - days) to now with span exactly equal to `days` in milliseconds.
- * Use for APIs that validate "must not exceed N days" (e.g. reset-sample).
+ * Use for APIs that validate "must not exceed N days".
  */
 export function getExactDaysRange(days: number): { startDate: string; endDate: string } {
   const end = new Date();

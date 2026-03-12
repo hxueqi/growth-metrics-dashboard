@@ -11,10 +11,6 @@ export interface SampleMetricPayload {
   value: number;
   timestamp: string;
   unit: string;
-  variant?: string | null;
-  country?: string | null;
-  device?: string | null;
-  segment?: string | null;
 }
 
 /** Unit per sample metric name. Stored in DB (Count/Currency/Percentage/Seconds). */
