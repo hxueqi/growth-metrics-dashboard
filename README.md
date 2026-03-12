@@ -1,22 +1,45 @@
 # Growth Metrics Dashboard
 
-A full-stack dashboard to record and visualize growth metrics over time. Post data points (name, value, timestamp, unit), store them in PostgreSQL, and view trends in a line chart with filters and export.
+## Live Demo
+
+https://growth-metrics-dashboard-sooty.vercel.app/
+
+## Quick Start
+
+```bash
+git clone https://github.com/hxueqi/growth-metrics-dashboard.git
+cd growth-metrics-dashboard
+npm install
+npx prisma migrate dev
+npm run dev
+```
+
+Then open: http://localhost:3000
 
 ## Overview
 
-The app helps teams **track metrics** (e.g. signups, activation, revenue) by **posting** observations via a simple form and **viewing** them in a time-series chart. Data is persisted in PostgreSQL and fetched with SWR. The UI enforces validation, shows clear loading and error states, and supports PDF export. Built for internal or single-tenant use.
+A full-stack analytics dashboard for recording and visualizing growth metrics over time.  
+Teams can post metric data points (name, value, timestamp, unit) and analyze trends through an interactive time-series chart.
 
 ## Features
 
-- **Duplicate timestamps** – For the same metric and timestamp, the chart uses the **last-created** record (by `createdAt`). Earlier duplicates are ignored so the series stays consistent.
+- **Duplicate timestamps** – If multiple records exist for the same metric and timestamp, the chart uses the most recently created record (`createdAt`). Earlier duplicates are ignored so the series remains deterministic.
 - **Single-point metrics as lines** – Metrics with only one data point are expanded over the selected date range (missing times filled with 0) so a line is drawn instead of a single dot.
 - **Single Y-axis** – Only the left Y-axis is shown for a cleaner chart.
 - **Metric selector by unit** – The metric dropdown is ordered by unit type (Count, Percentage, Currency, Seconds, Custom) so related metrics are grouped.
 - **Delete confirmation** – Removing a metric opens a confirmation modal; the metric is only deleted after the user confirms.
-- **Sample data via seed** – No “load sample” API is exposed. To get demo data after clone, run `npx prisma db seed` once (see Setup).
+- **Sample data via seed** – To get demo data after clone, run `npx prisma db seed` once (see Setup).
 - **PDF export** – Export the current chart and metadata to a PDF report.
 
-Additional behavior: multi-select metrics (same unit only), time-range presets (7d / 30d / 90d), unit-aware axes and tooltips, legend click-to-toggle, full-screen chart, skeleton loading, and defensive validation (value range, no future dates, name length).
+Additional behavior:
+
+- Multi-select metrics (same unit only)
+- Time-range presets (7d / 30d / 90d)
+- Unit-aware axes and tooltips
+- Legend click-to-toggle
+- Full-screen chart
+- Skeleton loading
+- Defensive validation (value range, no future dates, name length)
 
 ## Tech stack
 
@@ -25,6 +48,30 @@ Additional behavior: multi-select metrics (same unit only), time-range presets (
 - **Recharts** for the line chart
 - **TailwindCSS** for styling
 - **SWR** for data fetching
+
+## Architecture
+
+The application follows a simple full-stack architecture with a Next.js frontend, API routes for backend logic, and PostgreSQL for persistence.
+
+**Frontend**
+
+- Next.js (App Router)
+- SWR for client-side data fetching
+- Recharts for visualization
+- TailwindCSS for UI styling
+
+**Backend**
+
+- Next.js API routes
+- Prisma ORM
+- PostgreSQL database
+
+**Data flow**
+
+1. User submits a metric via the form
+2. The API validates the request and stores the record in PostgreSQL
+3. SWR revalidates the data
+4. The dashboard updates and Recharts renders the updated time-series chart
 
 ## Setup
 
@@ -77,16 +124,29 @@ Additional behavior: multi-select metrics (same unit only), time-range presets (
 
    Use the same `DATABASE_URL` as in Vercel (e.g. from a local `.env` or CI).
 
-If you see database-related errors after deploy, confirm `DATABASE_URL` is set correctly and that `npx prisma migrate deploy` has been run against the production database.
+If database-related errors appear after deployment, confirm that:
+
+- `DATABASE_URL` is correctly configured in Vercel
+- `npx prisma migrate deploy` has been executed against the production database
 
 ## API summary
 
 - **GET /api/metrics** – Query params: `name` (multiple allowed), `startDate`, `endDate` (ISO). Returns up to 5000 metrics, sorted by timestamp ascending. Duplicate (name, timestamp) rows are resolved by the chart logic using the last-created record (`createdAt`).
 - **POST /api/metrics** – Body: `{ name, value, timestamp; optional: unit }`. Creates one metric. `createdAt` is set by the database. Response and GET responses include only `id`, `name`, `value`, `unit`, `timestamp`, `createdAt`.
-- **DELETE /api/metrics** – Query param: `name`. Deletes all data points for that metric. Unauthenticated in this demo; suitable for internal/single-tenant use only.
+- **`DELETE /api/metrics?name=<metric>`** – Deletes all data points for the specified metric. Intended for internal/demo use (no authentication).
 - **GET /api/metrics/names** – Returns distinct metric names with units for the selector and Add metric form.
 
 Sample data is not loaded via API. After cloning, run `npx prisma db seed` to insert 90 days of demo metrics.
+
+## Future Improvements
+
+Potential extensions for this project:
+
+- Authentication and multi-tenant support
+- Editing existing metrics instead of only append/delete
+- Pagination or streaming for very large datasets
+- Server-side aggregation for large metric volumes
+- Alerts or threshold notifications
 
 ## Project structure
 
